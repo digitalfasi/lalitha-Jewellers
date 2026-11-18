@@ -1,0 +1,53 @@
+# Render Blueprint for the backend (API + Postgres + a disk for photos).
+# Render dashboard -> New -> Blueprint -> pick this repo. Then set CORS_ORIGINS
+# to the frontend's address (e.g. https://wholeseller.vercel.app).
+#
+# Plans: the free web service sleeps when idle (first request ~50 s) and free
+# Postgres is deleted after 30 days, so a real business needs paid plans.
+# The disk (for piece / combo photos and the logo) needs a paid web plan too.
+services:
+  - type: web
+    name: wholesale-api
+    runtime: python
+    region: singapore
+    plan: starter
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # Migrations run on every deploy before the app starts; they only ever add.
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /api/v1/health
+    disk:
+      name: uploads
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.10
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: wholesale-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: CORS_ORIGINS
+        sync: false   # set in the dashboard: the frontend URL(s), comma-separated
+      # Optional, for emailing bills:
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+databases:
+  - name: wholesale-db
+    region: singapore
+    plan: basic-256mb
+    databaseName: wholesale
+    user: wholesale

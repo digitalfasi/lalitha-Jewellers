@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #faf8f5;
+  --color-surface: #ffffff;
+  --color-line: #e7e2da;
+  --color-ink: #1f1a17;
+  --color-muted: #6f655d;
+  --color-accent: #9f1d35;
+  --color-accent-soft: #f8e9ec;
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/* Printing tags: only .print-only content goes to paper. */
+.print-only {
+  display: none;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block;
+  }
+  .print-sheet {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2mm;
+  }
+  .print-sheet .tag-label {
+    outline: 0.2mm dashed #bbb; /* cut guides */
+    break-inside: avoid;
+  }
+  .print-roll .tag-label {
+    break-after: page;
+  }
+  .print-roll .tag-label:last-child {
+    break-after: auto;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* Quick tag printing from any screen (TagPrinter): the labels are mounted
+   straight under <body>; while they are, only they go to paper. */
+@media print {
+  body:has(> .quick-print) > :not(.quick-print) {
+    display: none !important;
+  }
+}
