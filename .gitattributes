@@ -1,0 +1,7 @@
+# Linux line endings in the repo and in every copy sent to the server
+# (scripts, systemd units and Dockerfiles break with Windows CRLF).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ttf binary
+*.ico binary
