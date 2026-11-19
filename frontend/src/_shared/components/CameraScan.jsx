@@ -3,17 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import { beep } from "@/_shared/beep";
 import { Button } from "./ui";
+import { useT } from "@/_shared/i18n/LanguageProvider";
 
 // "Scan with camera" for phones and tablets without a barcode scanner.
 // Reads the QR code or the barcode on our tags (both hold the Item / Combo
 // Code) and hands the code to onCode. A USB scanner needs none of this: it
 // types into the normal input like a keyboard.
-export default function CameraScan({ onCode, label = "Camera", continuous = false, className }) {
+export default function CameraScan({ onCode, label, continuous = false, className }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button type="button" variant="ghost" onClick={() => setOpen(true)} className={className} title="Scan a tag with the camera">
-        <span aria-hidden>📷</span> {label}
+      <Button type="button" variant="ghost" onClick={() => setOpen(true)} className={className} title={t("Scan a tag with the camera")}>
+        <span aria-hidden>📷</span> {label ?? t("Camera")}
       </Button>
       {open && <Scanner onClose={() => setOpen(false)} onCode={onCode} continuous={continuous} />}
     </>
@@ -21,6 +23,7 @@ export default function CameraScan({ onCode, label = "Camera", continuous = fals
 }
 
 function Scanner({ onCode, onClose, continuous }) {
+  const { t } = useT();
   const video = useRef(null);
   const [error, setError] = useState(null);
   const [last, setLast] = useState(null);
@@ -59,10 +62,10 @@ function Scanner({ onCode, onClose, continuous }) {
       } catch (e) {
         setError(
           e?.name === "NotAllowedError"
-            ? "Camera permission was refused. Allow the camera for this site and try again."
+            ? t("Camera permission was refused. Allow the camera for this site and try again.")
             : e?.name === "NotFoundError" || e?.name === "OverconstrainedError"
-              ? "No camera found on this device."
-              : "The camera couldn't start. On a phone, open the app over https.",
+              ? t("No camera found on this device.")
+              : t("The camera couldn't start. On a phone, open the app over https."),
         );
       }
     })();
@@ -76,8 +79,8 @@ function Scanner({ onCode, onClose, continuous }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Scan with camera">
       <div className="w-full max-w-md rounded-2xl bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold">Point the camera at a tag</h2>
-          <Button variant="ghost" onClick={onClose}>{continuous ? "Done" : "Close"}</Button>
+          <h2 className="font-semibold">{t("Point the camera at a tag")}</h2>
+          <Button variant="ghost" onClick={onClose}>{continuous ? t("Done") : t("Close")}</Button>
         </div>
         {error ? (
           <p className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>
@@ -88,7 +91,7 @@ function Scanner({ onCode, onClose, continuous }) {
           </div>
         )}
         <p className="mt-2 text-xs text-muted">
-          {last ? <>Read <b className="font-mono">{last}</b>{continuous ? " — keep scanning." : ""}</> : "Reads the QR code or the barcode on our tags."}
+          {last ? <>{t("Read")} <b className="font-mono">{last}</b>{continuous ? ` — ${t("keep scanning.")}` : ""}</> : t("Reads the QR code or the barcode on our tags.")}
         </p>
       </div>
     </div>

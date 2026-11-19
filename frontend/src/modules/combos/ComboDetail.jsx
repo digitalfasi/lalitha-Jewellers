@@ -23,6 +23,7 @@ export default function ComboDetail({ combo, onChanged }) {
   const [history, setHistory] = useState([]);
   const [renameOffer, setRenameOffer] = useState(false); // after a change, offer the name that fits the pieces now
   const [reprint, setReprint] = useState([]); // codes whose physical tags are now out of date
+  const [undoUnlink, setUndoUnlink] = useState(null); // the piece just unlinked, for one tap back
   const { printTags, printer } = useTagPrinter();
   const [swapFor, setSwapFor] = useState(null); // item_code being swapped out
   const [note, setNote] = useState("");
@@ -43,6 +44,7 @@ export default function ComboDetail({ combo, onChanged }) {
     setNote("");
     setRenameOffer(false);
     setReprint([]);
+    setUndoUnlink(null);
   }, [combo.id]);
 
   const run = async (fn, okText, piecesChanged = true) => {
@@ -94,6 +96,16 @@ export default function ComboDetail({ combo, onChanged }) {
       </div>
 
       {notice && <Notice tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Notice>}
+      {undoUnlink && editable && (
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-canvas px-3 py-2 text-sm">
+          <span>{undoUnlink} was taken out of this set.</span>
+          <Button variant="link" onClick={() => {
+            const code = undoUnlink;
+            setUndoUnlink(null);
+            run(() => comboService.link(combo.id, code, "Undo of unlink"), `${code} is back in ${combo.combo_code}.`);
+          }}>Undo</Button>
+        </div>
+      )}
       {printer}
       {reprint.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -173,7 +185,11 @@ export default function ComboDetail({ combo, onChanged }) {
                         variant="link"
                         disabled={atMinimum || busy}
                         title={atMinimum ? "A combo needs at least 2 pieces — swap or dissolve instead" : undefined}
-                        onClick={() => run(() => comboService.unlink(combo.id, p.item_code, note || null), `Unlinked ${p.item_code}. It is free for another combo.`)}
+                        onClick={() => run(async () => {
+                          const out = await comboService.unlink(combo.id, p.item_code, note || null);
+                          setUndoUnlink(p.item_code);
+                          return out;
+                        }, `Unlinked ${p.item_code}. It is free for another combo.`)}
                       >
                         Unlink
                       </Button>

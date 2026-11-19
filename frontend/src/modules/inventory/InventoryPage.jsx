@@ -6,6 +6,7 @@ import clsx from "clsx";
 import { Notice } from "@/_shared/components/ui";
 import { inventoryService } from "./inventoryService";
 import { tagService } from "@/modules/tags/tagService";
+import { useT } from "@/_shared/i18n/LanguageProvider";
 import CategoriesTab from "./CategoriesTab";
 import DesignsTab from "./DesignsTab";
 import LotsTab from "./LotsTab";
@@ -22,6 +23,7 @@ export default function InventoryPage() {
   const [tab, setTab] = useState("pieces");
   const [categories, setCategories] = useState([]);
   const [error, setError] = useState(null);
+  const { t } = useT();
   const [lot, setLot] = useState(null); // filter pieces to one lot
   const [pendingTags, setPendingTags] = useState(0);
   useEffect(() => {
@@ -54,28 +56,28 @@ export default function InventoryPage() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Inventory</h1>
-          <p className="text-sm text-muted">Every piece gets its own Item Code from its category prefix.</p>
+          <h1 className="text-2xl font-bold">{t("Stock")}</h1>
+          <p className="hidden text-sm text-muted sm:block">{t("Every piece gets its own Item Code from its category prefix.")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
         {pendingTags > 0 && (
           <Link href="/tags" className="rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800 hover:underline">
-            {pendingTags} tag{pendingTags === 1 ? "" : "s"} to print
+            {t("{n} tags to print", { n: pendingTags })}
           </Link>
         )}
-        <Link href="/inventory/bulk" className="text-sm font-medium text-accent hover:underline">Bulk entry / import →</Link>
-        <nav className="flex rounded-xl border border-line bg-surface p-1" aria-label="Inventory sections">
-          {TABS.map((t) => (
+        <Link href="/inventory/bulk" className="text-sm font-medium text-accent hover:underline">{t("Bulk entry / import →")}</Link>
+        <nav className="grid w-full grid-cols-2 rounded-xl border border-line bg-surface p-1 sm:flex sm:w-auto" aria-label="Inventory sections">
+          {TABS.map((tb) => (
             <button
-              key={t.id}
-              onClick={() => choose(t.id)}
-              aria-current={tab === t.id ? "page" : undefined}
+              key={tb.id}
+              onClick={() => choose(tb.id)}
+              aria-current={tab === tb.id ? "page" : undefined}
               className={clsx(
                 "rounded-lg px-4 py-1.5 text-sm font-medium transition",
-                tab === t.id ? "bg-accent text-white" : "text-muted hover:text-ink",
+                tab === tb.id ? "bg-accent text-white" : "text-muted hover:text-ink",
               )}
             >
-              {t.label}
+              {t(tb.label)}
             </button>
           ))}
         </nav>

@@ -1,0 +1,11 @@
+# ~/.config/systemd/user/wholesale-backup.timer — every night at 02:30 server time
+[Unit]
+Description=Run the DFX Wholesale backup every night
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

@@ -90,6 +90,10 @@ class DesignOut(BaseModel):
     design_no: Optional[str]
     is_active: bool
     in_stock_count: int = 0
+    # Learned from pieces already entered with this design, to help the next entry:
+    usual_touch: Optional[float] = None    # the touch % used most often
+    typical_net: Optional[float] = None    # average net weight (g)
+    piece_count: int = 0
 
 
 # -------------------------------------------------------------------- pieces

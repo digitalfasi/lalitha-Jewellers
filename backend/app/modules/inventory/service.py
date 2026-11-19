@@ -184,10 +184,40 @@ class CategoryService:
         return _category_out(cat, pieces)
 
 
+async def _design_stats(db: AsyncSession, design_ids: List[str]) -> Dict[str, tuple]:
+    """design_id -> (most used touch %, average net g, pieces) over every piece ever
+    entered with that design. Used to pre-fill touch and to warn about odd weights."""
+    if not design_ids:
+        return {}
+    avg = dict(((did, (float(a), n)) for did, a, n in (await db.execute(
+        select(Piece.design_id, func.avg(Piece.net_weight), func.count(Piece.id))
+        .where(Piece.design_id.in_(design_ids)).group_by(Piece.design_id)
+    )).all()))
+    touch_counts = (await db.execute(
+        select(Piece.design_id, Piece.touch_percent, func.count(Piece.id))
+        .where(Piece.design_id.in_(design_ids), Piece.touch_percent.is_not(None))
+        .group_by(Piece.design_id, Piece.touch_percent)
+    )).all()
+    best: Dict[str, tuple] = {}
+    for did, touch, n in touch_counts:
+        if did not in best or n > best[did][1]:
+            best[did] = (float(touch), n)
+    return {did: (best.get(did, (None,))[0], round(a, 3), n) for did, (a, n) in avg.items()}
+
+
 class DesignService:
     @staticmethod
     async def list(db: AsyncSession, category_id: Optional[str]) -> List[DesignOut]:
-        return [_design_out(d, n) for d, n in await DesignRepository.list(db, category_id)]
+        rows = await DesignRepository.list(db, category_id)
+        stats = await _design_stats(db, [d.id for d, _ in rows])
+        out = []
+        for d, n in rows:
+            o = _design_out(d, n)
+            st = stats.get(d.id)
+            if st:
+                o.usual_touch, o.typical_net, o.piece_count = st
+            out.append(o)
+        return out
 
     @staticmethod
     async def create(db: AsyncSession, data: DesignCreate) -> DesignOut:

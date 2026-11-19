@@ -4,11 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { beep } from "@/_shared/beep";
 import { api } from "@/_shared/api/client";
+import { useT } from "@/_shared/i18n/LanguageProvider";
 
 // The header's "scan anything" box: scan or type any tag (piece CH0001, set
 // CB0001, bill INV-00001) and it opens straight away.
 export default function ScanBox() {
   const router = useRouter();
+  const { t } = useT();
   const [code, setCode] = useState("");
   const [error, setError] = useState(null);
 
@@ -40,8 +42,8 @@ export default function ScanBox() {
       <input
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        placeholder="Scan or type a code…"
-        aria-label="Scan or type any code"
+        placeholder={t("Scan or type a code…")}
+        aria-label={t("Scan or type a code…")}
         className="h-8 w-48 rounded-lg border border-line bg-canvas px-3 font-mono text-sm outline-none focus:border-accent"
       />
       {error && (

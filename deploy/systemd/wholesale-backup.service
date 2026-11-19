@@ -1,0 +1,10 @@
+# ~/.config/systemd/user/wholesale-backup.service (user sufiyan, no root needed)
+[Unit]
+Description=DFX Wholesale daily backup (database + photos)
+
+[Service]
+Type=oneshot
+ExecStart=%h/projects/wholesale/deploy/backup.sh
+# Low priority, so the backup never slows the live apps.
+Nice=15
+IOSchedulingClass=idle

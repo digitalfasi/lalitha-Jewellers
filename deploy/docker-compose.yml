@@ -1,0 +1,86 @@
+# DFX Wholesale on the shared VPS, under rootless Docker (user sufiyan).
+#
+# Kept apart from the DFX production apps:
+#   - its own Docker (rootless, data in /home/sufiyan/.local/share/docker)
+#   - its own project name, network, Postgres and volumes
+#   - ports published on 127.0.0.1 only; the host's nginx is the way in
+#   - memory and CPU caps, so it can't starve DFX on the 2-CPU / 8 GB box
+#
+# Run from this folder:  docker compose --env-file .env up -d --build
+name: wholesale
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wholesale
+      POSTGRES_USER: wholesale
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Not published: only the API reaches it, over the private network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wholesale -d wholesale"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    cpus: 0.75
+    logging: *logging
+    networks: [wholesale]
+
+  api:
+    build: ../backend
+    image: wholesale-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql://wholesale:${POSTGRES_PASSWORD}@db:5432/wholesale
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      CORS_ORIGINS: https://wholesale.dfxgold.tech
+      UPLOAD_DIR: /data/uploads
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "127.0.0.1:${API_PORT:-8020}:8000"
+    mem_limit: 640m
+    cpus: 1.0
+    logging: *logging
+    networks: [wholesale]
+
+  web:
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_URL: /api/v1
+    image: wholesale-web:latest
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3020}:3000"
+    mem_limit: 384m
+    cpus: 0.5
+    logging: *logging
+    networks: [wholesale]
+
+volumes:
+  pgdata:
+  uploads:
+
+networks:
+  wholesale:
