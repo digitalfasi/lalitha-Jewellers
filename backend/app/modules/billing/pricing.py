@@ -1,10 +1,12 @@
 """Bill arithmetic. Pure functions on Decimal; no database.
 
 v1 rule (to be confirmed with the wholesaler, who will walk through their slip):
+    touch  = as entered, or purity % + wastage %   (two ways shops quote the same thing)
     fine   = net weight x touch % / 100            (3 decimals, per piece)
     metal  = line fine x gold rate (Rs per g fine) (2 decimals, per line)
-    amount = metal + charges (Rs entered per line)
-    GST    = subtotal x GST %                      (on the whole bill)
+    amount = metal + charges (Rs entered per line, plus making Rs/g x net when given)
+    GST    = subtotal x GST %                      (on the whole bill: gold, making and stones alike,
+                                                    as GST on jewellery is charged on the full value)
              same state: half CGST + half SGST; other state: all IGST
     total  = subtotal + GST, rounded to the rupee; the difference is round-off
 """
@@ -32,6 +34,33 @@ def q2(x: Decimal) -> Decimal:
 
 def fine_of(net: Decimal, touch: Decimal) -> Decimal:
     return q3(net * touch / HUNDRED)
+
+
+# Gold content of each purity, in % - the hallmark grades (22K = "916").
+PURITY_PERCENT = {
+    "24K": Decimal("99.9"), "22K": Decimal("91.6"), "20K": Decimal("83.3"),
+    "18K": Decimal("75.0"), "14K": Decimal("58.5"),
+}
+GRAMS_PER_PAVAN = Decimal("8")      # one sovereign
+GRAMS_PER_TOLA = Decimal("11.664")
+
+
+def touch_from_wastage(purity: str, wastage: Decimal) -> Decimal:
+    """"22K + 8% wastage" is the same deal as "99.6 touch"."""
+    return PURITY_PERCENT[purity] + d(wastage)
+
+
+def making_for(net: Decimal, per_gram: Decimal) -> Decimal:
+    return q2(d(net) * d(per_gram))
+
+
+def gst_split(gst: Decimal, interstate: bool):
+    """(cgst, sgst, igst). Same state: half each, SGST takes the odd paisa."""
+    zero = Decimal("0.00")
+    if interstate:
+        return zero, zero, gst
+    cgst = q2(gst / 2)
+    return cgst, gst - cgst, zero
 
 
 @dataclass
@@ -96,12 +125,7 @@ def totals(lines: List[LineCalc], gst_percent: Decimal, interstate: bool = False
     s = lambda attr: sum((getattr(l, attr) for l in lines), Decimal("0"))  # noqa: E731
     subtotal = s("amount")
     gst = q2(subtotal * gst_percent / HUNDRED)
-    zero = Decimal("0.00")
-    if interstate:
-        cgst, sgst, igst = zero, zero, gst
-    else:
-        cgst = q2(gst / 2)
-        cgst, sgst, igst = cgst, gst - cgst, zero  # SGST takes the odd paisa
+    cgst, sgst, igst = gst_split(gst, interstate)
     before = subtotal + gst
     grand = before.quantize(RUPEE, rounding=ROUND_HALF_UP)
     return Totals(

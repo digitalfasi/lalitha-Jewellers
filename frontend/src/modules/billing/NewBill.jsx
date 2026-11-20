@@ -31,6 +31,8 @@ export default function NewBill() {
   const [goldRate, setGoldRate] = useState(""); // blank = the day's rate from Settings
   const [dayRate, setDayRate] = useState(undefined); // undefined = loading, null = not set
   const [gst, setGst] = useState("3");
+  // How this shop is priced: by touch %, or by purity + wastage % with making per gram.
+  const [priceBy, setPriceBy] = useState("TOUCH");
   const [remarks, setRemarks] = useState("");
   // [{code, kind: "PIECE"|"COMBO", comboCode, pieceCodes, charges, touch, photo, title, purity}]
   const [lines, setLines] = useState([]);
@@ -64,13 +66,19 @@ export default function NewBill() {
       gold_rate: goldRate === "" ? null : parseFloat(goldRate),
       gst_percent: gst === "" ? 0 : parseFloat(gst),
       remarks: remarks || null,
-      lines: lines.map((l) => ({
-        code: l.code,
-        charges: l.charges === "" ? 0 : parseFloat(l.charges) || 0,
-        touch_percent: l.touch === "" ? null : parseFloat(l.touch) || null,
-      })),
+      lines: lines.map((l) => {
+        const charges = l.charges === "" ? 0 : parseFloat(l.charges) || 0;
+        if (priceBy === "WASTAGE") {
+          return {
+            code: l.code, charges,
+            wastage_percent: (l.wastage ?? "") === "" ? 0 : parseFloat(l.wastage) || 0,
+            making_per_gram: (l.making ?? "") === "" ? null : parseFloat(l.making) || null,
+          };
+        }
+        return { code: l.code, charges, touch_percent: l.touch === "" ? null : parseFloat(l.touch) || null };
+      }),
     }),
-    [shopId, billDate, goldRate, gst, remarks, lines],
+    [shopId, billDate, goldRate, gst, remarks, lines, priceBy],
   );
   const rateOk = goldRate === "" ? !!dayRate : draft.gold_rate > 0;
   const shop = shops.find((s) => s.id === shopId);
@@ -284,6 +292,16 @@ export default function NewBill() {
               {quoteError && <div className="mt-3"><Notice tone="error">{quoteError}</Notice></div>}
             </Card>
             <Tip id="newbill">{t("Scanning one piece of a set adds the whole set. Leave Touch empty to use each piece's own touch.")}</Tip>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted">{t("Price by")}</span>
+              {[["TOUCH", "Touch %"], ["WASTAGE", "Purity + wastage"]].map(([k, label]) => (
+                <button key={k} type="button" onClick={() => setPriceBy(k)}
+                  className={clsx("rounded-lg border px-3 py-1.5", priceBy === k ? "border-accent bg-accent-soft font-semibold text-accent" : "border-line hover:bg-canvas")}>
+                  {t(label)}
+                </button>
+              ))}
+              {priceBy === "WASTAGE" && <span className="text-xs text-muted">{t("Touch = purity + wastage (22K + 8 = 99.6). Making is ₹ per gram of net weight.")}</span>}
+            </div>
 
             {lines.length === 0 ? (
               <Card className="p-10 text-center text-muted">{t("Scan pieces or sets to start the bill.")}</Card>
@@ -305,13 +323,29 @@ export default function NewBill() {
                         <div className="truncate text-sm">{ql ? ql.description : l.title || (l.pieceCodes || []).join(" + ")}</div>
                         {ql && <div className="text-xs tabular-nums text-muted">{t("Net")} {grams(ql.net_weight)} g · {t("Fine")} {grams(ql.fine_weight)} g</div>}
                       </div>
+                      {priceBy === "TOUCH" ? (
+                        <label className="flex flex-col text-xs text-muted">
+                          {t("Touch %")}
+                          <Input type="number" inputMode="decimal" min="0" max="200" step="0.01" value={l.touch} onChange={(e) => setLine(i, "touch", e.target.value)}
+                            placeholder={ql ? String(ql.touch_percent) : ""} className="h-9 w-20 text-right" aria-label={t("Touch for {code}", { code: l.code })} />
+                        </label>
+                      ) : (
+                        <>
+                          <label className="flex flex-col text-xs text-muted">
+                            {t("Wastage %")}
+                            <Input type="number" inputMode="decimal" min="0" max="100" step="0.01" value={l.wastage ?? ""} onChange={(e) => setLine(i, "wastage", e.target.value)}
+                              placeholder="0" className="h-9 w-20 text-right" aria-label={t("Wastage for {code}", { code: l.code })} />
+                            {ql && <span className="text-[11px]">{t("touch")} {ql.touch_percent}</span>}
+                          </label>
+                          <label className="flex flex-col text-xs text-muted">
+                            {t("Making ₹/g")}
+                            <Input type="number" inputMode="decimal" min="0" step="0.01" value={l.making ?? ""} onChange={(e) => setLine(i, "making", e.target.value)}
+                              placeholder="0" className="h-9 w-20 text-right" aria-label={t("Making for {code}", { code: l.code })} />
+                          </label>
+                        </>
+                      )}
                       <label className="flex flex-col text-xs text-muted">
-                        {t("Touch %")}
-                        <Input type="number" inputMode="decimal" min="0" max="200" step="0.01" value={l.touch} onChange={(e) => setLine(i, "touch", e.target.value)}
-                          placeholder={ql ? String(ql.touch_percent) : ""} className="h-9 w-20 text-right" aria-label={t("Touch for {code}", { code: l.code })} />
-                      </label>
-                      <label className="flex flex-col text-xs text-muted">
-                        {t("Charges ₹")}
+                        {priceBy === "TOUCH" ? t("Charges ₹") : t("Other ₹")}
                         <Input type="number" inputMode="decimal" min="0" step="0.01" value={l.charges} onChange={(e) => setLine(i, "charges", e.target.value)}
                           placeholder="0" className="h-9 w-24 text-right" aria-label={t("Charges for {code}", { code: l.code })} />
                       </label>

@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
-import { Home, Images, Link2, Package, Receipt, ScanLine, Settings, Tag } from "lucide-react";
+import { Calculator as CalcIcon, Home, Images, Link2, Package, Receipt, ScanLine, Settings, Tag } from "lucide-react";
 import { ROLE_LABEL, isManager, useAuth } from "@/_shared/auth/AuthProvider";
 import { LanguageSwitch, useT } from "@/_shared/i18n/LanguageProvider";
 import GoldRateBadge from "./GoldRateBadge";
 import HealthBadge from "./HealthBadge";
 import ScanBox from "./ScanBox";
+import Calculator from "@/modules/calc/Calculator";
 
 // On phones the menu moves to a bar at the bottom (thumb reach), with the five
 // most used screens; everything else is one tap away on Home.
@@ -31,6 +33,7 @@ export default function AppHeader() {
   const { user, signOut } = useAuth();
   const { t } = useT();
   const links = LINKS.filter((l) => !l.managers || isManager(user));
+  const [calc, setCalc] = useState(false);
   return (
     <header className="no-print border-b border-line bg-surface">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-2.5">
@@ -52,6 +55,10 @@ export default function AppHeader() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ScanBox />
+          <button onClick={() => setCalc(true)} title={t("Calculator")}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-sm hover:bg-canvas">
+            <CalcIcon size={16} aria-hidden /> <span className="hidden md:inline">{t("Calculator")}</span>
+          </button>
           <GoldRateBadge />
           <LanguageSwitch />
           <span className="hidden sm:inline-flex"><HealthBadge /></span>
@@ -69,6 +76,8 @@ export default function AppHeader() {
           </details>
         </div>
       </div>
+
+      <Calculator open={calc} onClose={() => setCalc(false)} />
 
       <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] sm:hidden"
         aria-label={t("Main menu")}>

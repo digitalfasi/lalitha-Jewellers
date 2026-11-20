@@ -24,9 +24,12 @@ from app.modules.billing.model import (
     BillLinePiece,
     Shop,
 )
-from app.modules.billing.pricing import LineCalc, PieceCalc, Totals, d, fine_of, totals
+from app.modules.billing.pricing import (
+    PURITY_PERCENT, LineCalc, PieceCalc, Totals, d, fine_of, making_for, totals, touch_from_wastage,
+)
 from app.modules.billing.schema import (
     BillDraft,
+    BillLineIn,
     BillLineOut,
     BillLinePieceOut,
     BillList,
@@ -116,12 +119,25 @@ class ShopService:
 
 # ------------------------------------------------------- building a bill
 
-def _piece_touch(piece: Piece, override: Optional[float]) -> Decimal:
-    if override is not None:
-        return d(override)
+def _piece_touch(piece: Piece, entry: BillLineIn) -> Decimal:
+    if entry.touch_percent is not None:
+        return d(entry.touch_percent)
+    if entry.wastage_percent is not None:
+        if piece.purity not in PURITY_PERCENT:
+            raise ValidationException(f"{piece.item_code} has no purity %, so wastage can't be added. Enter a touch %.")
+        return touch_from_wastage(piece.purity, d(entry.wastage_percent))
     if piece.touch_percent is None:
         raise ValidationException(f"{piece.item_code} has no touch %. Enter one on the bill line.", field="touch_percent")
     return d(piece.touch_percent)
+
+
+def _charges(entry: BillLineIn, pieces: List[Piece]) -> Decimal:
+    """Charges typed on the line, plus making per gram x the line's net weight."""
+    charges = d(entry.charges)
+    if entry.making_per_gram:
+        net = sum((d(p.net_weight) for p in pieces), Decimal("0"))
+        charges += making_for(net, d(entry.making_per_gram))
+    return charges
 
 
 def _check_in_stock(piece: Piece) -> None:
@@ -175,14 +191,14 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
             for p in members:
                 _check_in_stock(p)
                 claim(p, combo.combo_code)
-                touch = _piece_touch(p, entry.touch_percent)
+                touch = _piece_touch(p, entry)
                 calcs.append(PieceCalc(piece=p, touch=touch, fine=fine_of(d(p.net_weight), touch)))
             title = combo.name or " + ".join(p.category.name for p in members)
             lines.append(LineCalc(
                 kind=LINE_KIND_COMBO, code=combo.combo_code,
                 description=f"{title} ({' + '.join(p.item_code for p in members)})",
                 purity=" / ".join(dict.fromkeys(p.purity for p in members)),
-                charges=d(entry.charges), pieces=calcs, combo=combo, hsn=members[0].category.hsn_code,
+                charges=_charges(entry, members), pieces=calcs, combo=combo, hsn=members[0].category.hsn_code,
             ).price(gold_rate))
         else:
             piece = await PieceRepository.get_by_code(db, entry.code)
@@ -190,7 +206,7 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
                 raise NotFoundException(f"No piece with code {entry.code}.")
             _check_in_stock(piece)
             claim(piece, entry.code)
-            touch = _piece_touch(piece, entry.touch_percent)
+            touch = _piece_touch(piece, entry)
             membership = await ComboItemRepository.active_for_piece(db, piece.id)
             combo = None
             if membership:
@@ -199,7 +215,7 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
             lines.append(LineCalc(
                 kind=LINE_KIND_PIECE, code=piece.item_code,
                 description=piece.name + (f" (part of {combo.combo_code})" if combo else ""),
-                purity=piece.purity, charges=d(entry.charges),
+                purity=piece.purity, charges=_charges(entry, [piece]),
                 pieces=[PieceCalc(piece=piece, touch=touch, fine=fine_of(d(piece.net_weight), touch))],
                 combo=combo, hsn=piece.category.hsn_code,
             ).price(gold_rate))

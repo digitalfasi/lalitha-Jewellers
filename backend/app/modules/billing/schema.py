@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app._shared.core.gst_states import check_code
 
@@ -70,6 +70,17 @@ class BillLineIn(BaseModel):
     touch_percent: Optional[float] = Field(
         None, gt=0, le=200, description="Overrides the piece's own touch (for a combo line: every piece in it)"
     )
+    # The other way shops quote: purity + wastage, and making per gram. When wastage is
+    # given, each piece's touch = its purity % + wastage % (so mixed-purity sets come out right).
+    wastage_percent: Optional[float] = Field(None, ge=0, le=100, description="Added to each piece's purity %")
+    making_per_gram: Optional[float] = Field(
+        None, ge=0, le=1_000_000, description="Rupees per gram of net weight, added to the line's charges")
+
+    @model_validator(mode="after")
+    def _one_way(self):
+        if self.touch_percent is not None and self.wastage_percent is not None:
+            raise ValueError("Give either touch % or wastage %, not both")
+        return self
 
     @field_validator("code", mode="before")
     @classmethod

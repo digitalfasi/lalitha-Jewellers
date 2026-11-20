@@ -48,7 +48,7 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
     # Same shape as AppException, so the web app reads one error format.
     first = exc.errors()[0] if exc.errors() else {}
     field = ".".join(str(p) for p in first.get("loc", ())[1:]) or None
-    message = first.get("msg", "Invalid request")
+    message = first.get("msg", "Invalid request").removeprefix("Value error, ")
     return JSONResponse(
         status_code=422,
         content={
