@@ -1,6 +1,6 @@
 import re
 import uuid
-from datetime import date
+from datetime import timezone, date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app._shared.core.actor import actor_name
 from app._shared.core.uploads import delete_upload, save_image, upload_url
 from app._shared.exceptions.base import ConflictException, NotFoundException, ValidationException
+from app.modules.billing.pricing import fine_of
 from app.modules.inventory.model import (
     LOT_COUNTER_KEY,
     PIECE_STATUS_IN_STOCK,
@@ -77,8 +78,14 @@ def _weights(gross: Decimal, stone: Decimal) -> Decimal:
     return gross - stone
 
 
-def tag_state(p: Piece, combo_code: Optional[str]):
-    """(state, note) for a piece's physical tag. Only in-stock pieces need tags."""
+def _aware(dt):
+    return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
+
+
+def tag_state(p: Piece, back=None):
+    """(state, note) for a piece's physical tag. Only in-stock pieces need tags.
+    back: the combo code, or (combo code, partner codes now, when the combo last changed)."""
+    combo_code, back_with, changed_at = back if isinstance(back, tuple) else (back, None, None)
     if p.status != PIECE_STATUS_IN_STOCK:
         return None, None
     if p.tag_printed_at is None:
@@ -89,11 +96,18 @@ def tag_state(p: Piece, combo_code: Optional[str]):
         if not combo_code:
             return "COMBO_CHANGED", f"Tag back still says {p.tag_back_code}, but it is no longer in a combo"
         return "COMBO_CHANGED", f"Tag back says {p.tag_back_code}, but it is now in {combo_code}"
+    # Same combo, but its pieces may have changed: the back lists the partners.
+    if combo_code and back_with is not None:
+        if p.tag_back_with is not None:
+            if p.tag_back_with != back_with:
+                return "COMBO_CHANGED", f"{combo_code} changed: the back says with {p.tag_back_with or 'no other piece'}, now with {back_with or 'no other piece'}"
+        elif changed_at is not None and _aware(p.tag_printed_at) < _aware(changed_at):
+            return "COMBO_CHANGED", f"{combo_code} changed since this tag was printed: the back should say with {back_with}"
     return "OK", None
 
 
 
-def piece_out(p: Piece, combo_code: Optional[str] = None) -> PieceOut:
+def piece_out(p: Piece, combo_code: Optional[str] = None, back=None) -> PieceOut:
     return PieceOut(
         id=p.id,
         item_code=p.item_code,
@@ -107,6 +121,7 @@ def piece_out(p: Piece, combo_code: Optional[str] = None) -> PieceOut:
         stone_weight=float(p.stone_weight),
         net_weight=float(p.net_weight),
         touch_percent=float(p.touch_percent) if p.touch_percent is not None else None,
+        cost_touch=float(p.cost_touch) if p.cost_touch is not None else None,
         status=p.status,
         remarks=p.remarks,
         huid=p.huid,
@@ -117,7 +132,7 @@ def piece_out(p: Piece, combo_code: Optional[str] = None) -> PieceOut:
         created_by_name=p.created_by_name,
         created_at=p.created_at,
         combo_code=combo_code,
-        tag_state=tag_state(p, combo_code)[0],
+        tag_state=tag_state(p, back or combo_code)[0],
     )
 
 
@@ -125,6 +140,7 @@ def _design_out(d: Design, in_stock: int) -> DesignOut:
     return DesignOut(
         id=d.id, category_id=d.category_id, category_name=d.category.name, name=d.name,
         design_no=d.design_no, is_active=d.is_active, in_stock_count=in_stock,
+        default_percent=float(d.default_percent) if d.default_percent is not None else None,
     )
 
 
@@ -147,7 +163,9 @@ class CategoryService:
             raise ConflictException(f"A category named '{data.name}' already exists.")
         if await CategoryRepository.find_by_prefix(db, prefix):
             raise ConflictException(f"Code prefix {prefix} is already used by another category.")
-        cat = Category(id=_new_id(), name=data.name, code_prefix=prefix, hsn_code=data.hsn_code or "7113",
+        from app.modules.business.service import BusinessService
+        default_hsn = (await BusinessService.load(db)).default_hsn or "7113"
+        cat = Category(id=_new_id(), name=data.name, code_prefix=prefix, hsn_code=data.hsn_code or default_hsn,
                        is_active=True)
         db.add(cat)
         await db.commit()
@@ -228,7 +246,8 @@ class DesignService:
             raise ValidationException("This category is inactive.", field="category_id")
         if await DesignRepository.find_by_name(db, cat.id, data.name):
             raise ConflictException(f"'{data.name}' already exists in {cat.name}.")
-        d = Design(id=_new_id(), category_id=cat.id, name=data.name, design_no=data.design_no or None)
+        d = Design(id=_new_id(), category_id=cat.id, name=data.name, design_no=data.design_no or None,
+                   default_percent=Decimal(str(data.default_percent)) if data.default_percent is not None else None)
         db.add(d)
         await db.commit()
         d = await DesignRepository.get(db, d.id)
@@ -245,6 +264,8 @@ class DesignService:
             d.name = data.name
         if "design_no" in data.model_fields_set:
             d.design_no = data.design_no or None
+        if "default_percent" in data.model_fields_set:
+            d.default_percent = Decimal(str(data.default_percent)) if data.default_percent is not None else None
         if data.is_active is not None:
             d.is_active = data.is_active
         await db.commit()
@@ -257,8 +278,14 @@ async def _combo_codes(db: AsyncSession, piece_ids) -> dict:
     return await ComboItemRepository.active_combo_codes(db, piece_ids)
 
 
+async def _combo_backs(db: AsyncSession, piece_ids) -> dict:
+    from app.modules.combos.repository import ComboItemRepository
+    return await ComboItemRepository.active_backs(db, piece_ids)
+
+
 async def _piece_out(db: AsyncSession, p: Piece) -> PieceOut:
-    return piece_out(p, (await _combo_codes(db, [p.id])).get(p.id))
+    back = (await _combo_backs(db, [p.id])).get(p.id)
+    return piece_out(p, back[0] if back else None, back)
 
 
 async def _huid_owner(db: AsyncSession, huid: str, exclude_id: Optional[str] = None) -> Optional[str]:
@@ -293,8 +320,9 @@ class PieceService:
     @staticmethod
     async def list(db: AsyncSession, **filters) -> PieceList:
         items, total = await PieceRepository.list(db, **filters)
-        codes = await _combo_codes(db, [p.id for p in items])
-        return PieceList(items=[piece_out(p, codes.get(p.id)) for p in items], total=total)
+        backs = await _combo_backs(db, [p.id for p in items])
+        return PieceList(items=[piece_out(p, backs[p.id][0] if p.id in backs else None, backs.get(p.id)) for p in items],
+                         total=total)
 
     @staticmethod
     async def get(db: AsyncSession, piece_id: str) -> PieceOut:
@@ -319,6 +347,11 @@ class PieceService:
         if not cat.is_active:
             raise ValidationException("This category is inactive.", field="category_id")
         design_id = await PieceService._resolve_design(db, data.design_id, cat.id)
+        design = await DesignRepository.get(db, design_id) if design_id else None
+        touch = data.touch_percent
+        if touch is None and design is not None and design.default_percent is not None:
+            touch = float(design.default_percent)  # the sub-category's usual %
+        name = (data.name or "").strip() or (design.name if design else cat.name)
         if data.huid:
             owner = await _huid_owner(db, data.huid)
             if owner:
@@ -333,12 +366,13 @@ class PieceService:
             item_code=await CodeSequenceRepository.next_code(db, cat.code_prefix),
             category_id=cat.id,
             design_id=design_id,
-            name=data.name,
+            name=name,
             purity=data.purity,
             gross_weight=gross,
             stone_weight=stone,
             net_weight=net,
-            touch_percent=Decimal(str(data.touch_percent)) if data.touch_percent is not None else None,
+            touch_percent=Decimal(str(touch)) if touch is not None else None,
+            cost_touch=Decimal(str(data.cost_touch)) if data.cost_touch is not None else None,
             status=PIECE_STATUS_IN_STOCK,
             remarks=data.remarks or None,
             huid=data.huid,
@@ -406,6 +440,8 @@ class PieceService:
             p.gross_weight, p.stone_weight = gross, stone
         if "touch_percent" in sent:
             p.touch_percent = Decimal(str(data.touch_percent)) if data.touch_percent is not None else None
+        if "cost_touch" in sent:
+            p.cost_touch = Decimal(str(data.cost_touch)) if data.cost_touch is not None else None
         if "remarks" in sent:
             p.remarks = data.remarks or None
         if "huid" in sent:
@@ -497,15 +533,25 @@ class KarigarService:
 
 async def _lot_out(db: AsyncSession, lot: Lot) -> LotOut:
     in_stock = func.sum(case((Piece.status == PIECE_STATUS_IN_STOCK, 1), else_=0))
+    no_cost = func.sum(case((Piece.cost_touch.is_(None), 1), else_=0))
     row = (await db.execute(
         select(func.count(Piece.id), func.coalesce(func.sum(Piece.gross_weight), 0),
-               func.coalesce(func.sum(Piece.net_weight), 0), func.coalesce(in_stock, 0))
+               func.coalesce(func.sum(Piece.net_weight), 0), func.coalesce(in_stock, 0), func.coalesce(no_cost, 0))
         .where(Piece.lot_id == lot.id)
     )).one()
+    # Fine that came back, piece by piece with the bill's rounding.
+    costed = (await db.execute(
+        select(Piece.net_weight, Piece.cost_touch).where(Piece.lot_id == lot.id, Piece.cost_touch.is_not(None))
+    )).all()
+    returned = sum((fine_of(Decimal(str(n)), Decimal(str(t))) for n, t in costed), Decimal("0"))
+    given = lot.gold_given_fine
     return LotOut(id=lot.id, lot_no=lot.lot_no, karigar_id=lot.karigar_id,
                   karigar_name=lot.karigar.name if lot.karigar else None, received_on=lot.received_on,
                   remarks=lot.remarks, created_by_name=lot.created_by_name, piece_count=row[0],
-                  total_gross=float(row[1]), total_net=float(row[2]), in_stock_count=int(row[3]))
+                  total_gross=float(row[1]), total_net=float(row[2]), in_stock_count=int(row[3]),
+                  gold_given_fine=float(given) if given is not None else None, returned_fine=float(returned),
+                  pieces_without_cost_touch=int(row[4]),
+                  karigar_balance=float(given - returned) if given is not None else None)
 
 
 class LotService:
@@ -537,6 +583,7 @@ class LotService:
         n = await CodeSequenceRepository.next_value(db, LOT_COUNTER_KEY)
         lot = Lot(id=_new_id(), lot_no=f"LOT-{n:04d}", karigar_id=karigar_id,
                   received_on=data.received_on or date.today(), remarks=data.remarks or None,
+                  gold_given_fine=Decimal(str(data.gold_given_fine)) if data.gold_given_fine is not None else None,
                   created_by_name=actor_name())
         db.add(lot)
         await db.commit()
@@ -554,5 +601,7 @@ class LotService:
             lot.received_on = data.received_on
         if "remarks" in sent:
             lot.remarks = data.remarks or None
+        if "gold_given_fine" in sent:
+            lot.gold_given_fine = Decimal(str(data.gold_given_fine)) if data.gold_given_fine is not None else None
         await db.commit()
         return await _lot_out(db, await db.get(Lot, lot.id, populate_existing=True))

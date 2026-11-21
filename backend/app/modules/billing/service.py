@@ -56,10 +56,26 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
-def _shop_out(s: Shop) -> ShopOut:
+DEAL_FIELDS = ("price_mode", "deal_touch", "deal_wastage", "deal_making")
+_f = lambda v: float(v) if v is not None else None  # noqa: E731
+
+
+def _shop_out(s: Shop, gold_balance: Optional[Decimal] = None) -> ShopOut:
     return ShopOut(id=s.id, name=s.name, contact_person=s.contact_person, phone=s.phone, gstin=s.gstin,
                    address=s.address, city=s.city, state_code=s.state_code, state_name=state_name(s.state_code),
-                   is_active=s.is_active)
+                   price_mode=s.price_mode, deal_touch=_f(s.deal_touch), deal_wastage=_f(s.deal_wastage),
+                   deal_making=_f(s.deal_making), settles_in_gold=bool(s.settles_in_gold),
+                   gold_balance=_f(gold_balance) if s.settles_in_gold else None, is_active=s.is_active)
+
+
+def _set_shop_field(shop: Shop, k: str, v) -> None:
+    if k in DEAL_FIELDS:
+        setattr(shop, k, (d(v) if k != "price_mode" else v) if v is not None else None)  # 0 wastage is a real deal
+    elif k == "settles_in_gold":
+        if v is not None:
+            shop.settles_in_gold = v
+    else:
+        setattr(shop, k, v or None)  # blank clears the field
 
 
 # ------------------------------------------------------------------- shops
@@ -73,7 +89,8 @@ class ShopService:
         if q:
             like = f"%{q.strip().lower()}%"
             stmt = stmt.where(or_(func.lower(Shop.name).like(like), func.lower(Shop.city).like(like), Shop.phone.like(like)))
-        return [_shop_out(s) for s in (await db.execute(stmt)).scalars()]
+        from app.modules.billing.extras import shops_with_balances
+        return await shops_with_balances(db, (await db.execute(stmt)).scalars().all())
 
     @staticmethod
     async def _name_taken(db: AsyncSession, name: str, exclude_id: Optional[str] = None) -> bool:
@@ -86,12 +103,14 @@ class ShopService:
     async def create(db: AsyncSession, data: ShopCreate) -> ShopOut:
         if await ShopService._name_taken(db, data.name):
             raise ConflictException(f"A shop named '{data.name}' already exists.")
-        shop = Shop(id=_new_id(), is_active=True, **{k: (v or None) for k, v in data.model_dump().items()})
+        shop = Shop(id=_new_id(), is_active=True, settles_in_gold=False)
+        for k, v in data.model_dump().items():
+            _set_shop_field(shop, k, v)
         shop.name = data.name
         shop.state_code = code_from_gstin(shop.gstin) or shop.state_code
         db.add(shop)
         await db.commit()
-        return _shop_out(shop)
+        return _shop_out(shop, Decimal("0"))
 
     @staticmethod
     async def update(db: AsyncSession, shop_id: str, data: ShopUpdate) -> ShopOut:
@@ -110,11 +129,12 @@ class ShopService:
                 if v is not None:
                     shop.is_active = v
             else:
-                setattr(shop, k, v or None)  # blank clears the field
+                _set_shop_field(shop, k, v)
         if "gstin" in data.model_fields_set and code_from_gstin(shop.gstin):
             shop.state_code = code_from_gstin(shop.gstin)
         await db.commit()
-        return _shop_out(shop)
+        from app.modules.billing.extras import GoldAccountService
+        return _shop_out(shop, await GoldAccountService.balance(db, shop.id))
 
 
 # ------------------------------------------------------- building a bill
@@ -126,9 +146,11 @@ def _piece_touch(piece: Piece, entry: BillLineIn) -> Decimal:
         if piece.purity not in PURITY_PERCENT:
             raise ValidationException(f"{piece.item_code} has no purity %, so wastage can't be added. Enter a touch %.")
         return touch_from_wastage(piece.purity, d(entry.wastage_percent))
-    if piece.touch_percent is None:
-        raise ValidationException(f"{piece.item_code} has no touch %. Enter one on the bill line.", field="touch_percent")
-    return d(piece.touch_percent)
+    if piece.touch_percent is not None:
+        return d(piece.touch_percent)
+    if piece.design is not None and piece.design.default_percent is not None:
+        return d(piece.design.default_percent)  # the sub-category's usual %
+    raise ValidationException(f"{piece.item_code} has no %. Enter one on the bill line.", field="touch_percent")
 
 
 def _charges(entry: BillLineIn, pieces: List[Piece]) -> Decimal:
@@ -165,9 +187,18 @@ def _interstate(seller: BusinessProfile, shop: Optional[Shop]) -> bool:
     return bool(shop and seller.state_code and shop.state_code and seller.state_code != shop.state_code)
 
 
+async def charge_rates(db: AsyncSession, stone_rate: Optional[float], huid_rate: Optional[float]) -> Tuple[Decimal, Decimal]:
+    """Stone Rs/g and HUID Rs/piece: as typed on the bill, else the owner's settings."""
+    biz = await BusinessService.load(db)
+    stone = d(stone_rate) if stone_rate is not None else d(biz.stone_rate or 0)
+    huid = d(huid_rate) if huid_rate is not None else d(biz.huid_rate or 0)
+    return stone, huid
+
+
 async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interstate: bool) -> Tuple[List[LineCalc], Totals]:
     """Turn the entered codes into priced lines, enforcing every sale rule.
     Used unchanged by quote (no save) and create (save)."""
+    stone_rate, huid_rate = await charge_rates(db, draft.stone_rate, draft.huid_rate)
     seen_pieces: Dict[str, str] = {}   # piece_id -> where it appeared (for duplicate errors)
     lines: List[LineCalc] = []
     split_combos: Dict[str, Tuple[Combo, set]] = {}  # combo_id -> (combo, piece ids billed singly)
@@ -199,7 +230,7 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
                 description=f"{title} ({' + '.join(p.item_code for p in members)})",
                 purity=" / ".join(dict.fromkeys(p.purity for p in members)),
                 charges=_charges(entry, members), pieces=calcs, combo=combo, hsn=members[0].category.hsn_code,
-            ).price(gold_rate))
+            ).price(gold_rate, stone_rate))
         else:
             piece = await PieceRepository.get_by_code(db, entry.code)
             if not piece:
@@ -218,7 +249,7 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
                 purity=piece.purity, charges=_charges(entry, [piece]),
                 pieces=[PieceCalc(piece=piece, touch=touch, fine=fine_of(d(piece.net_weight), touch))],
                 combo=combo, hsn=piece.category.hsn_code,
-            ).price(gold_rate))
+            ).price(gold_rate, stone_rate))
 
     # A combo billed piece-by-piece must have all its pieces on the bill:
     # selling part of a combo would leave a combo with sold pieces in it.
@@ -232,14 +263,16 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
                 f"too, bill {combo.combo_code} as one line, or unlink first."
             )
 
-    return lines, totals(lines, d(draft.gst_percent), interstate)
+    return lines, totals(lines, d(draft.gst_percent), interstate, huid_rate, stone_rate)
 
 
 def _totals_out(t) -> BillTotals:
     return BillTotals(
         total_pieces=t.total_pieces, total_gross=float(t.total_gross), total_stone=float(t.total_stone),
         total_net=float(t.total_net), total_fine=float(t.total_fine), metal_amount=float(t.metal_amount),
-        total_charges=float(t.total_charges), subtotal=float(t.subtotal), gst_amount=float(t.gst_amount),
+        total_charges=float(t.total_charges), stone_rate=float(t.stone_rate or 0),
+        stone_amount=float(t.stone_amount or 0), huid_rate=float(t.huid_rate or 0), huid_pieces=t.huid_pieces or 0,
+        huid_amount=float(t.huid_amount or 0), subtotal=float(t.subtotal), gst_amount=float(t.gst_amount),
         tax_type=t.tax_type, cgst_amount=float(t.cgst_amount), sgst_amount=float(t.sgst_amount),
         igst_amount=float(t.igst_amount), round_off=float(t.round_off), grand_total=float(t.grand_total),
     )
@@ -251,7 +284,7 @@ def _calc_line_out(no: int, l: LineCalc) -> BillLineOut:
         combo_code=l.combo.combo_code if l.combo is not None else None, purity=l.purity,
         gross_weight=float(l.gross), stone_weight=float(l.stone), net_weight=float(l.net),
         touch_percent=float(l.touch), fine_weight=float(l.fine), metal_amount=float(l.metal),
-        charges=float(l.charges), amount=float(l.amount),
+        charges=float(l.charges), stone_amount=float(l.stone_amount), amount=float(l.amount),
         pieces=[
             BillLinePieceOut(
                 piece_id=p.piece.id, item_code=p.piece.item_code, name=p.piece.name, purity=p.piece.purity,
@@ -280,7 +313,8 @@ def bill_out(b: Bill) -> BillOut:
                 combo_code=l.combo_code,
                 purity=l.purity, gross_weight=float(l.gross_weight), stone_weight=float(l.stone_weight),
                 net_weight=float(l.net_weight), touch_percent=float(l.touch_percent), fine_weight=float(l.fine_weight),
-                metal_amount=float(l.metal_amount), charges=float(l.charges), amount=float(l.amount),
+                metal_amount=float(l.metal_amount), charges=float(l.charges),
+                stone_amount=float(l.stone_amount or 0), amount=float(l.amount),
                 pieces=[
                     BillLinePieceOut(
                         piece_id=p.piece_id, item_code=p.item_code, name=p.name, purity=p.purity, huid=p.huid,
@@ -356,7 +390,7 @@ class BillService:
             created_by_name=actor_name(),
             **{k: getattr(t, k) for k in (
                 "total_pieces", "total_gross", "total_stone", "total_net", "total_fine", "metal_amount",
-                "total_charges", "subtotal", "gst_amount", "tax_type", "cgst_amount", "sgst_amount", "igst_amount",
+                "total_charges", "stone_rate", "stone_amount", "huid_rate", "huid_pieces", "huid_amount", "subtotal", "gst_amount", "tax_type", "cgst_amount", "sgst_amount", "igst_amount",
                 "round_off", "grand_total")},
         )
         db.add(bill)
@@ -367,7 +401,8 @@ class BillService:
                 hsn_code=l.hsn, combo_id=l.combo.id if l.combo is not None else None,
                 combo_code=l.combo.combo_code if l.combo is not None else None,
                 purity=l.purity, gross_weight=l.gross, stone_weight=l.stone, net_weight=l.net,
-                touch_percent=l.touch, fine_weight=l.fine, metal_amount=l.metal, charges=l.charges, amount=l.amount,
+                touch_percent=l.touch, fine_weight=l.fine, metal_amount=l.metal, charges=l.charges,
+                stone_amount=l.stone_amount, amount=l.amount,
             )
             db.add(line)
             if l.combo is not None:
@@ -380,6 +415,10 @@ class BillService:
                     gross_weight=p.piece.gross_weight, stone_weight=p.piece.stone_weight,
                     net_weight=p.piece.net_weight, touch_percent=p.touch, fine_weight=p.fine, active=True,
                 ))
+        from app.modules.billing.extras import EstimateService, GoldAccountService
+        GoldAccountService.on_bill(db, shop, bill)
+        if draft.estimate_id:
+            await EstimateService.mark_billed(db, draft.estimate_id, bill)
         try:
             await db.flush()
             await _set_status(db, Piece, piece_ids, PIECE_STATUS_IN_STOCK, PIECE_STATUS_SOLD, "pieces")
@@ -439,6 +478,8 @@ class BillService:
         bill.cancelled_at = utcnow()
         bill.cancel_reason = data.reason
         bill.cancelled_by_name = actor_name()
+        from app.modules.billing.extras import GoldAccountService
+        await GoldAccountService.on_cancel(db, bill)
         await db.commit()
         return bill_out(await _get_bill(db, bill.id))
 

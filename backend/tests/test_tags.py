@@ -54,3 +54,29 @@ async def test_label_not_printable_once_stock_has_left(client):
     await client.post(f"/api/v1/combos/{combo['id']}/dissolve", json={})
     label = (await client.get(f"{API}/resolve/CB0001")).json()
     assert label["printable"] is False and label["piece_codes"] == []
+
+
+async def test_partner_change_flags_the_whole_combo(client):
+    """CH0001 + PD0001 printed; PD0002 joins, PD0001 leaves: CH0001's back is stale too."""
+    await _stock(client)
+    combo = (await client.post("/api/v1/combos", json={"piece_codes": ["CH0001", "PD0001"]})).json()
+    await client.post(f"{API}/printed", json={"codes": ["CH0001", "PD0001", "PD0002"]})
+    assert (await client.get(f"{API}/pending")).json() == []
+
+    await client.post(f"/api/v1/combos/{combo['id']}/link", json={"piece_code": "PD0002"})
+    await client.post(f"/api/v1/combos/{combo['id']}/unlink", json={"piece_code": "PD0001"})
+    pending = {p["code"]: p for p in (await client.get(f"{API}/pending")).json()}
+    assert set(pending) == {"CH0001", "PD0001", "PD0002"}
+    assert pending["CH0001"]["back_was"] == "CB0001 with PD0001"
+    assert pending["CH0001"]["back_now"] == "CB0001 with PD0002"
+    assert pending["PD0001"]["back_was_code"] == "CB0001" and pending["PD0001"]["back_now"] is None
+    # Shelf order: Chain before Pendant.
+    assert list(pending)[0] == "CH0001"
+
+    await client.post(f"{API}/printed", json={"codes": ["CB0001", "PD0001"]})
+    assert (await client.get(f"{API}/pending")).json() == []
+    # Printing again with nothing changed is a reprint.
+    await client.post(f"{API}/printed", json={"codes": ["CH0001"]})
+    hist = (await client.get(f"{API}/history/CH0001")).json()
+    assert [h["reason"] for h in hist] == ["REPRINT", "COMBO_CHANGED", "NEW"]
+    assert hist[0]["back_with"] == "PD0002"

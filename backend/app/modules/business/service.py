@@ -5,7 +5,7 @@ from app._shared.core.config import settings
 from app._shared.core.gst_states import code_from_gstin, state_name
 from app._shared.core.uploads import delete_upload, save_image, upload_url
 from app.modules.business.model import PROFILE_ID, BusinessProfile
-from app.modules.business.schema import BusinessIn, BusinessOut
+from app.modules.business.schema import BusinessIn, BusinessOut, ChargesIn
 
 
 def _out(p: BusinessProfile) -> BusinessOut:
@@ -14,7 +14,9 @@ def _out(p: BusinessProfile) -> BusinessOut:
         state_name=state_name(p.state_code), gstin=p.gstin, pan=p.pan, phone=p.phone, email=p.email,
         bank_name=p.bank_name, bank_account=p.bank_account, bank_ifsc=p.bank_ifsc, bank_branch=p.bank_branch,
         bill_terms=p.bill_terms, logo_url=upload_url(p.logo_path), is_set_up=bool(p.name),
-        email_enabled=bool(settings.SMTP_HOST),
+        email_enabled=bool(settings.SMTP_HOST), default_hsn=p.default_hsn or "7113",
+        huid_rate=float(p.huid_rate) if p.huid_rate is not None else None,
+        stone_rate=float(p.stone_rate) if p.stone_rate is not None else None, show_making=bool(p.show_making),
     )
 
 
@@ -41,6 +43,20 @@ class BusinessService:
         p.name = data.name
         # The GSTIN already says which state the business is in.
         p.state_code = code_from_gstin(p.gstin) or p.state_code
+        await db.commit()
+        return _out(p)
+
+    @staticmethod
+    async def save_charges(db: AsyncSession, data: ChargesIn) -> BusinessOut:
+        from decimal import Decimal
+        p = await db.get(BusinessProfile, PROFILE_ID)
+        if p is None:
+            p = BusinessProfile(id=PROFILE_ID, name="")
+            db.add(p)
+        p.default_hsn = data.default_hsn
+        p.huid_rate = Decimal(str(data.huid_rate)) if data.huid_rate is not None else None
+        p.stone_rate = Decimal(str(data.stone_rate)) if data.stone_rate is not None else None
+        p.show_making = data.show_making
         await db.commit()
         return _out(p)
 

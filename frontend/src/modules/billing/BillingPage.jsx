@@ -3,21 +3,31 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import clsx from "clsx";
+import { isManager, useAuth } from "@/_shared/auth/AuthProvider";
+import { useT } from "@/_shared/i18n/LanguageProvider";
 import BillsList from "./BillsList";
+import EstimatesTab from "./EstimatesTab";
+import ProfitTab from "./ProfitTab";
+import { FEATURES } from "@/_shared/features";
 import ShopsTab from "./ShopsTab";
 
-const TABS = [
+const ALL_TABS = [
   { id: "bills", label: "Bills" },
+  { id: "estimates", label: "Estimates" },
   { id: "shops", label: "Shops" },
-];
+  FEATURES.profit && { id: "profit", label: "Profit", managers: true },
+].filter(Boolean);
 
 export default function BillingPage() {
+  const { t } = useT();
+  const { user } = useAuth();
+  const TABS = ALL_TABS.filter((x) => !x.managers || isManager(user));
   const [tab, setTab] = useState("bills");
 
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem("billing.tab");
-      if (saved && TABS.some((t) => t.id === saved)) setTab(saved);
+      if (saved && ALL_TABS.some((x) => x.id === saved)) setTab(saved);
     } catch {}
   }, []);
   const choose = (id) => {
@@ -34,16 +44,16 @@ export default function BillingPage() {
           <h1 className="text-2xl font-bold">Billing</h1>
           <p className="text-sm text-muted">Bills to retail shops. Saving a bill marks its pieces and combos sold.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <nav className="flex rounded-xl border border-line bg-surface p-1" aria-label="Billing sections">
-            {TABS.map((t) => (
+            {TABS.map((x) => (
               <button
-                key={t.id}
-                onClick={() => choose(t.id)}
-                aria-current={tab === t.id ? "page" : undefined}
-                className={clsx("rounded-lg px-4 py-1.5 text-sm font-medium transition", tab === t.id ? "bg-accent text-white" : "text-muted hover:text-ink")}
+                key={x.id}
+                onClick={() => choose(x.id)}
+                aria-current={tab === x.id ? "page" : undefined}
+                className={clsx("rounded-lg px-3 py-1.5 text-sm font-medium transition", tab === x.id ? "bg-accent text-white" : "text-muted hover:text-ink")}
               >
-                {t.label}
+                {t(x.label)}
               </button>
             ))}
           </nav>
@@ -52,7 +62,10 @@ export default function BillingPage() {
           </Link>
         </div>
       </div>
-      {tab === "bills" ? <BillsList /> : <ShopsTab />}
+      {tab === "bills" && <BillsList />}
+      {tab === "estimates" && <EstimatesTab />}
+      {tab === "shops" && <ShopsTab />}
+      {FEATURES.profit && tab === "profit" && isManager(user) && <ProfitTab />}
     </div>
   );
 }

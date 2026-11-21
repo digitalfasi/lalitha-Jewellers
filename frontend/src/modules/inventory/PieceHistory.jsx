@@ -1,5 +1,6 @@
 "use client";
 
+import { tagService } from "@/modules/tags/tagService";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { mediaUrl } from "@/_shared/api/client";
@@ -14,10 +15,12 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "2-dig
 export default function PieceHistory({ piece, onClose }) {
   const [combos, setCombos] = useState(null);
   const [bills, setBills] = useState(null);
+  const [tags, setTags] = useState(null);
 
   useEffect(() => {
     inventoryService.pieceCombos(piece.item_code).then(setCombos).catch(() => setCombos([]));
     inventoryService.pieceBills(piece.item_code).then(setBills).catch(() => setBills([]));
+    tagService.history(piece.item_code).then(setTags).catch(() => setTags([]));
   }, [piece.item_code]);
 
   return (
@@ -77,6 +80,23 @@ export default function PieceHistory({ piece, onClose }) {
                 <div className="text-xs text-muted">
                   {fmtDay(b.bill_date)} · {b.status === "CANCELLED" ? "cancelled" : "sold"}
                   {b.line_code !== piece.item_code ? ` (as part of ${b.line_code})` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">Tags printed</h3>
+        {tags === null ? <p className="text-sm text-muted">Loading…</p> : tags.length === 0 ? (
+          <p className="text-sm text-muted">No tag printed yet.</p>
+        ) : (
+          <ul className="mt-1 divide-y divide-line text-sm">
+            {tags.map((x) => (
+              <li key={x.printed_at} className="py-2">
+                <b>{{ NEW: "First tag", COMBO_CHANGED: "New tag: combo changed", REPRINT: "Reprint (lost or damaged)" }[x.reason]}</b>
+                <div className="text-xs text-muted">
+                  {new Date(x.printed_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {x.by_name ? ` · ${x.by_name}` : ""}
+                  {x.back_code ? ` · back: ${x.back_code}${x.back_with ? ` with ${x.back_with}` : ""}` : ""}
                 </div>
               </li>
             ))}

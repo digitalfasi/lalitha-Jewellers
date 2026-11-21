@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app._shared.core.actor import actor_name
 from app._shared.core.uploads import upload_url
 from app._shared.exceptions.base import NotFoundException, ValidationException
 from app.modules.combos.model import COMBO_PREFIX, COMBO_STATUS_ACTIVE, Combo
@@ -12,7 +14,8 @@ from app.modules.combos.service import combo_out
 from app.modules.inventory.model import PIECE_STATUS_IN_STOCK, Piece
 from app.modules.inventory.repository import PieceRepository
 from app.modules.inventory.service import tag_state
-from app.modules.tags.schema import ComboBack, LabelBatchOut, LabelOut, PendingTagOut, PrintedOut
+from app.modules.tags.model import TAG_REPRINT, TagPrint
+from app.modules.tags.schema import ComboBack, LabelBatchOut, LabelOut, PendingTagOut, PrintedOut, TagPrintOut
 
 MAX_BATCH = 200
 
@@ -31,9 +34,9 @@ def _back(c: Combo) -> ComboBack:
     )
 
 
-def _piece_label(p: Piece, combo: Optional[Combo]) -> LabelOut:
+def _piece_label(p: Piece, combo: Optional[Combo], back=None) -> LabelOut:
     combo_code = combo.combo_code if combo else None
-    state, note = tag_state(p, combo_code)
+    state, note = tag_state(p, back or combo_code)
     return LabelOut(
         kind="PIECE", id=p.id, code=p.item_code, title=p.name, category_name=p.category.name,
         purity=p.purity, gross_weight=float(p.gross_weight), stone_weight=float(p.stone_weight),
@@ -66,7 +69,8 @@ async def _lookup(db: AsyncSession, code: str) -> Optional[LabelOut]:
         return None
     item = await ComboItemRepository.active_for_piece(db, piece.id)
     combo = await ComboRepository.get(db, item.combo_id) if item else None
-    return _piece_label(piece, combo)
+    back = (await ComboItemRepository.active_backs(db, [piece.id])).get(piece.id) if combo else None
+    return _piece_label(piece, combo, back)
 
 
 class TagService:
@@ -118,10 +122,17 @@ class TagService:
                 p = await PieceRepository.get_by_code(db, code)
                 if p:
                     pieces[p.id] = p
-        backs = await ComboItemRepository.active_combo_codes(db, list(pieces))
+        backs = await ComboItemRepository.active_backs(db, list(pieces))
+        by = actor_name()
         for pid, p in pieces.items():
+            back = backs.get(pid)
+            state, _ = tag_state(p, back)
+            reason = state if state in ("NEW", "COMBO_CHANGED") else TAG_REPRINT
             p.tag_printed_at = now
-            p.tag_back_code = backs.get(pid)
+            p.tag_back_code = back[0] if back else None
+            p.tag_back_with = back[1] if back else None
+            db.add(TagPrint(id=str(uuid.uuid4()), piece_id=pid, item_code=p.item_code, printed_at=now, reason=reason,
+                            back_code=p.tag_back_code, back_with=p.tag_back_with, by_name=by))
         await db.commit()
         return PrintedOut(marked=len(pieces))
 
@@ -131,13 +142,31 @@ class TagService:
         rows = (await db.execute(
             select(Piece).where(Piece.status == PIECE_STATUS_IN_STOCK).order_by(Piece.item_code)
         )).unique().scalars().all()
-        backs = await ComboItemRepository.active_combo_codes(db, [p.id for p in rows])
+        backs = await ComboItemRepository.active_backs(db, [p.id for p in rows])
         out = []
         for p in rows:
-            state, note = tag_state(p, backs.get(p.id))
+            back = backs.get(p.id)
+            state, note = tag_state(p, back)
             if state in ("NEW", "COMBO_CHANGED"):
-                out.append(PendingTagOut(code=p.item_code, name=p.name, category_name=p.category.name,
-                                         state=state, note=note, combo_code=backs.get(p.id)))
-                if len(out) >= limit:
-                    break
-        return out
+                was = (f"{p.tag_back_code}" + (f" with {p.tag_back_with}" if p.tag_back_with else "")) if p.tag_back_code else None
+                now_ = (f"{back[0]}" + (f" with {back[1]}" if back[1] else "")) if back else None
+                out.append(PendingTagOut(
+                    code=p.item_code, name=p.name, category_name=p.category.name,
+                    design_name=p.design.name if p.design else None, state=state, note=note,
+                    combo_code=back[0] if back else None, back_was_code=p.tag_back_code,
+                    back_was=was if state == "COMBO_CHANGED" else None, back_now=now_ if state == "COMBO_CHANGED" else None,
+                ))
+        # In shelf order: category, then sub-category, then code.
+        out.sort(key=lambda x: (x.category_name.lower(), (x.design_name or "").lower(), x.code))
+        return out[:limit]
+
+    @staticmethod
+    async def history(db: AsyncSession, code: str) -> List[TagPrintOut]:
+        piece = await PieceRepository.get_by_code(db, _norm(code))
+        if not piece:
+            raise NotFoundException(f"No piece with code {_norm(code)}.")
+        rows = (await db.execute(
+            select(TagPrint).where(TagPrint.piece_id == piece.id).order_by(TagPrint.printed_at.desc())
+        )).scalars().all()
+        return [TagPrintOut(printed_at=r.printed_at, reason=r.reason, back_code=r.back_code, back_with=r.back_with,
+                            by_name=r.by_name) for r in rows]

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._shared.core.database import get_async_db
-from app.modules.tags.schema import LabelBatchOut, LabelOut, PendingTagOut, PrintedIn, PrintedOut
+from app.modules.tags.schema import LabelBatchOut, LabelOut, PendingTagOut, PrintedIn, PrintedOut, TagPrintOut
 from app.modules.tags.service import MAX_BATCH, TagService
 
 # Signed-in staff only (applied in api/v1/router.py).
@@ -39,3 +39,9 @@ async def pending_tags(db: AsyncSession = Depends(get_async_db)):
 async def tags_printed(data: PrintedIn, db: AsyncSession = Depends(get_async_db)):
     """Staff confirm the tags came out of the printer and are on the pieces."""
     return await TagService.mark_printed(db, data.codes)
+
+
+@router.get("/history/{code}", response_model=List[TagPrintOut])
+async def tag_history(code: str, db: AsyncSession = Depends(get_async_db)):
+    """Every tag printed for a piece, newest first, and why (new, combo changed, reprint)."""
+    return await TagService.history(db, code)

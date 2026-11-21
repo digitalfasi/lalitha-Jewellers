@@ -42,6 +42,8 @@ class Design(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     design_no: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Shown as a sub-category. Its % fills in on new stock and on bills when a piece has none.
+    default_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     category: Mapped[Category] = relationship(lazy="joined")
@@ -86,6 +88,8 @@ class Lot(Base, TimestampMixin):
     received_on: Mapped[date] = mapped_column(Date, nullable=False)
     remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Fine gold handed to the karigar for this lot, to check what came back.
+    gold_given_fine: Mapped[Optional[Decimal]] = mapped_column(WEIGHT, nullable=True)
 
     karigar: Mapped[Optional[Karigar]] = relationship(lazy="joined")
 
@@ -112,6 +116,8 @@ class Piece(Base, TimestampMixin):
     net_weight: Mapped[Decimal] = mapped_column(WEIGHT, nullable=False)
     # Touch / tunch %, optional until the billing rules are settled.
     touch_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
+    # Touch the karigar charged us (purchase). Sale touch - cost touch = our gold margin.
+    cost_touch: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=PIECE_STATUS_IN_STOCK, nullable=False, index=True)
     remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Hallmark Unique ID: 6 letters/digits, one per hallmarked piece.
@@ -126,6 +132,8 @@ class Piece(Base, TimestampMixin):
     # was, or when the piece's combo has changed since.
     tag_printed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tag_back_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # The partner codes printed on that back ("CH0002 + ST0002"), to spot a combo whose pieces changed.
+    tag_back_with: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     category: Mapped[Category] = relationship(lazy="joined")
     design: Mapped[Optional[Design]] = relationship(lazy="joined")

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import exists, func, or_, select
@@ -78,6 +79,36 @@ class ComboItemRepository:
             .where(ComboItem.piece_id.in_(ids), _active_item)
         )
         return dict(res.all())
+
+    @staticmethod
+    async def active_backs(db: AsyncSession, piece_ids: Iterable[str]) -> Dict[str, Tuple[str, str, datetime]]:
+        """piece_id -> (combo code, partner codes now as "A + B", when the combo last changed).
+        What the back of the piece's tag should say today."""
+        ids = list(piece_ids)
+        if not ids:
+            return {}
+        mine = (await db.execute(
+            select(ComboItem.piece_id, ComboItem.combo_id).where(ComboItem.piece_id.in_(ids), _active_item)
+        )).all()
+        if not mine:
+            return {}
+        rows = (await db.execute(
+            select(ComboItem.combo_id, ComboItem.piece_id, ComboItem.linked_at, ComboItem.unlinked_at,
+                   Piece.item_code, Combo.combo_code)
+            .join(Piece, Piece.id == ComboItem.piece_id).join(Combo, Combo.id == ComboItem.combo_id)
+            .where(ComboItem.combo_id.in_({c for _, c in mine}))
+        )).all()
+        codes, changed, members = {}, {}, {}
+        for cid, pid, linked, unlinked, item_code, combo_code in rows:
+            codes[cid] = combo_code
+            t = unlinked or linked
+            changed[cid] = max(changed[cid], t) if cid in changed else t
+            if unlinked is None:
+                members.setdefault(cid, []).append((pid, item_code))
+        return {
+            pid: (codes[cid], " + ".join(sorted(c for p2, c in members.get(cid, []) if p2 != pid)), changed[cid])
+            for pid, cid in mine
+        }
 
     @staticmethod
     async def history_for_piece(db: AsyncSession, piece_id: str) -> List[Tuple[ComboItem, Combo]]:

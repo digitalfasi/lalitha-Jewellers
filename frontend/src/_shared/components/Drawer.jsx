@@ -7,7 +7,7 @@ import { useT } from "@/_shared/i18n/LanguageProvider";
 // A panel that slides in from the right, over the page, for a form (Add stock,
 // Edit piece). It scrolls on its own, so the page behind keeps its place.
 // Full screen on phones. Esc or the X closes it.
-export default function Drawer({ open, onClose, title, children }) {
+export default function Drawer({ open, onClose, title, children, footer }) {
   const { t } = useT();
   useEffect(() => {
     if (!open) return;
@@ -32,6 +32,7 @@ export default function Drawer({ open, onClose, title, children }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="border-t border-line bg-surface px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{footer}</div>}
       </aside>
     </div>
   );

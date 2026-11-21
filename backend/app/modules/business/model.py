@@ -1,6 +1,8 @@
 from typing import Optional
 
-from sqlalchemy import String, Text
+from decimal import Decimal
+
+from sqlalchemy import Boolean, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app._shared.models.base import Base, TimestampMixin
@@ -29,3 +31,8 @@ class BusinessProfile(Base, TimestampMixin):
     bank_branch: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bill_terms: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     logo_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    # Bill settings the owner can change.
+    default_hsn: Mapped[str] = mapped_column(String(8), nullable=False, default="7113", server_default="7113")
+    huid_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)    # Rs per hallmarked piece
+    stone_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)   # Rs per gram of less
+    show_making: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)

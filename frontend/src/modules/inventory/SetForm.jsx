@@ -86,7 +86,7 @@ export default function SetForm({ categories, onSaved, footer }) {
   return (
     <form onSubmit={save} className="flex flex-col gap-3">
       {templates.length > 0 && (
-        <Field label={t("Kind of set")} hint={t("Fills in the categories")}>
+        <Field label={t("Kind of combo")} hint={t("Fills in the categories")}>
           <Select defaultValue="" onChange={(e) => applyTemplate(e.target.value)}>
             <option value="">{t("Choose…")}</option>
             {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -135,7 +135,7 @@ export default function SetForm({ categories, onSaved, footer }) {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label={t("Set name")} hint={t("Optional")}>
+        <Field label={t("Combo name")} hint={t("Optional")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={suggested || "Rope chain + Lakshmi pendant"} maxLength={150} />
         </Field>
         <Field label={t("Lot")}>
@@ -148,7 +148,7 @@ export default function SetForm({ categories, onSaved, footer }) {
 
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       {footer}
-      <Button type="submit" disabled={busy}>{busy ? t("Saving…") : t("Save set of {n} pieces", { n: rows.length })}</Button>
+      <Button type="submit" disabled={busy}>{busy ? t("Saving…") : t("Save combo of {n} pieces", { n: rows.length })}</Button>
     </form>
   );
 }

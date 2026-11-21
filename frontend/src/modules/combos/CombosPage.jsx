@@ -56,7 +56,7 @@ export default function CombosPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Combos</h1>
-          <p className="text-sm text-muted">Link pieces into a set with its own CB code. Swap or unlink any time; every change is kept.</p>
+          <p className="text-sm text-muted">Link pieces into a combo with its own CB code. Swap or unlink any time; every change is kept.</p>
         </div>
         <Button onClick={() => setSelected("new")}>+ New combo</Button>
       </div>

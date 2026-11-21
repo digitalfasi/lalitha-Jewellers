@@ -60,6 +60,22 @@ class BusinessIn(BaseModel):
         return check_code(v)
 
 
+class ChargesIn(BaseModel):
+    """Bill settings the owner sets once; each bill can still change them."""
+    default_hsn: str = Field("7113", max_length=8)
+    huid_rate: Optional[float] = Field(None, ge=0, le=100_000, description="Rs per hallmarked piece")
+    stone_rate: Optional[float] = Field(None, ge=0, le=1_000_000, description="Rs per gram of less (stone) weight")
+    show_making: bool = False
+
+    @field_validator("default_hsn", mode="before")
+    @classmethod
+    def _hsn(cls, v):
+        v = (v or "").strip() or "7113"
+        if not re.fullmatch(r"\d{4,8}", v):
+            raise ValueError("HSN code is 4 to 8 digits, e.g. 7113")
+        return v
+
+
 class BusinessOut(BaseModel):
     name: str
     address: Optional[str]
@@ -79,3 +95,7 @@ class BusinessOut(BaseModel):
     logo_url: Optional[str]
     is_set_up: bool          # name entered: bills can carry a proper header
     email_enabled: bool      # SMTP configured on the server: bills can be emailed
+    default_hsn: str = "7113"
+    huid_rate: Optional[float] = None
+    stone_rate: Optional[float] = None
+    show_making: bool = False

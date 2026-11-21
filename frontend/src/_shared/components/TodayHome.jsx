@@ -1,5 +1,6 @@
 "use client";
 
+import { FEATURES } from "@/_shared/features";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BookOpen, Images, Link2, PackagePlus, Receipt, ScanLine, Settings, Tag } from "lucide-react";
@@ -39,13 +40,13 @@ export default function TodayHome() {
   }, []);
 
   const jobs = [
-    { href: "/inventory", icon: PackagePlus, label: "Add stock", text: "One piece or a whole set. Tags print as you save." },
-    { href: "/billing/new", icon: Receipt, label: "New bill", text: "Scan pieces or sets for a shop." },
-    { href: "/inventory?pick=1", icon: Link2, label: "Make a set", text: "Tick pieces in stock and join them." },
+    { href: "/inventory", icon: PackagePlus, label: "Add stock", text: "One piece or a whole combo. Tags print as you save." },
+    { href: "/billing/new", icon: Receipt, label: "New bill", text: "Scan pieces or combos for a shop." },
+    { href: "/inventory?pick=1", icon: Link2, label: "Make a combo", text: "Tick pieces in stock and join them." },
     { href: "/tags", icon: Tag, label: "Print tags", text: s?.pending ? t("{n} waiting", { n: s.pending }) : t("All tags printed"), warn: s?.pending > 0 },
-    { href: "/audit", icon: ScanLine, label: "Stock count", text: "Scan the shelves, see what's missing." },
-    { href: "/catalogue", icon: Images, label: "Catalogue", text: "Show available sets to a shop." },
-  ];
+    FEATURES.stockCount && { href: "/audit", icon: ScanLine, label: "Stock count", text: "Scan the shelves, see what's missing." },
+    { href: "/catalogue", icon: Images, label: "Catalogue", text: "Show available combos to a shop." },
+  ].filter(Boolean);
   if (isManager(user)) jobs.push({ href: "/settings", icon: Settings, label: "Settings", text: "Gold rate, business details, staff." });
   jobs.push({ href: "/help", icon: BookOpen, label: "Help", text: "How to do each job, step by step." });
 
@@ -56,12 +57,12 @@ export default function TodayHome() {
         <p className="text-sm text-muted">{new Date().toLocaleDateString(lang === "ta" ? "ta-IN" : "en-IN", { weekday: "long", day: "numeric", month: "long" })}</p>
       </div>
 
-      <Tip id="home">{t("Tip: scan any tag into the box at the top of every page to open that piece, set or bill.")}</Tip>
+      <Tip id="home">{t("Tip: scan any tag into the box at the top of every page to open that piece, combo or bill.")}</Tip>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label={t("Gold rate today")} value={s ? (s.rate ? `${inr(s.rate)}/g` : t("Not set")) : "…"} warn={s && !s.rate} href="/settings?tab=rate" />
         <Stat label={t("Pieces in stock")} value={s?.pieces ?? "…"} href="/inventory" />
-        <Stat label={t("Sets ready")} value={s?.combos ?? "…"} href="/combos" />
+        <Stat label={t("Combos ready")} value={s?.combos ?? "…"} href="/combos" />
         <Stat label={t("Sold today")} value={s ? `${s.bills} · ${inr(s.sales)}` : "…"} href="/billing" />
       </section>
 

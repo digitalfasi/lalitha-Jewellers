@@ -72,7 +72,7 @@ async def test_quote_arithmetic(client, setup):
 
 async def test_touch_needed_and_override(client, setup):
     res = await client.post(f"{API}/quote", json=draft(None, [{"code": "CH0002"}]))
-    assert res.status_code == 422 and "touch" in res.json()["error"]["message"]
+    assert res.status_code == 422 and "no %" in res.json()["error"]["message"]
     res = await client.post(f"{API}/quote", json=draft(None, [{"code": "CH0002", "touch_percent": 91.6}]))
     assert res.json()["lines"][0]["fine_weight"] == 7.786  # 8.5 x 91.6%
     # A single piece shows the touch as entered, not one re-derived from the rounded fine.

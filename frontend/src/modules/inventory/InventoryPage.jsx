@@ -11,13 +11,14 @@ import CategoriesTab from "./CategoriesTab";
 import DesignsTab from "./DesignsTab";
 import LotsTab from "./LotsTab";
 import PiecesTab from "./PiecesTab";
+import { FEATURES } from "@/_shared/features";
 
 const TABS = [
   { id: "pieces", label: "Pieces" },
-  { id: "lots", label: "Lots & karigars" },
+  FEATURES.lots && { id: "lots", label: "Lots & karigars" },
   { id: "categories", label: "Categories" },
-  { id: "designs", label: "Designs" },
-];
+  { id: "designs", label: "Sub-categories" },
+].filter(Boolean);
 
 export default function InventoryPage() {
   const [tab, setTab] = useState("pieces");
@@ -87,7 +88,7 @@ export default function InventoryPage() {
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
 
       {tab === "pieces" && <PiecesTab categories={categories} onChanged={loadCategories} lot={lot} onClearLot={() => setLot(null)} />}
-      {tab === "lots" && <LotsTab onShowPieces={(l) => { setLot(l); choose("pieces"); }} />}
+      {FEATURES.lots && tab === "lots" && <LotsTab onShowPieces={(l) => { setLot(l); choose("pieces"); }} />}
       {tab === "categories" && <CategoriesTab categories={categories} onChanged={loadCategories} />}
       {tab === "designs" && <DesignsTab categories={categories} />}
     </div>

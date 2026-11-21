@@ -39,7 +39,7 @@ function Qr({ value }) {
 }
 
 // One face of a tag: QR, code, a title line, an extra line, weights, barcode.
-function Face({ code, title, extra, purity, gross, stone, net, small, w, h, corner }) {
+function Face({ code, title, extra, purity, gross, stone, net, small, w, h, corner, date }) {
   return (
     <div
       className="relative flex flex-col overflow-hidden bg-white text-black"
@@ -60,11 +60,15 @@ function Face({ code, title, extra, purity, gross, stone, net, small, w, h, corn
             <div className="truncate" style={{ fontSize: small ? "2.3mm" : "3.2mm" }}>{title}</div>
             {extra && <div className="truncate font-mono" style={{ fontSize: small ? "2.1mm" : "2.6mm" }}>{extra}</div>}
           </div>
-          <div className="tabular-nums" style={{ fontSize: small ? "2.2mm" : "3mm" }}>
-            <span className="font-semibold">{purity}</span>
-            {" · "}G {grams(gross)}
-            {stone > 0 && !small && <> · S {grams(stone)}</>}
-            {" · "}N {grams(net)}
+          <div className="flex items-baseline justify-between gap-1 tabular-nums" style={{ fontSize: small ? "2.2mm" : "3mm" }}>
+            <span>
+              <span className="font-semibold">{purity}</span>
+              {" · "}G {grams(gross)}
+              {stone > 0 && !small && <> · L {grams(stone)}</>}
+              {" · "}N {grams(net)}
+            </span>
+            {/* Print date: when an old and a new tag get mixed up, the newer one is easy to spot. */}
+            {date && <span className="shrink-0 opacity-70" style={{ fontSize: small ? "1.8mm" : "2.3mm" }}>{date}</span>}
           </div>
         </div>
       </div>
@@ -82,13 +86,15 @@ export default function TagLabel({ label, size = "small", style = "single", back
   const { w, h } = LABEL_SIZES[size];
   const small = size === "small";
   const combo = label.kind === "COMBO";
+  const now = new Date();
+  const date = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   const front = (
     <Face
       small={small} w={w} h={h} code={label.code} title={label.title}
       corner={style === "fold" && !combo ? "Front" : null}
       extra={combo ? (!small ? label.piece_codes.join(" + ") : null) : label.huid ? `HUID ${label.huid}` : null}
-      purity={label.purity} gross={label.gross_weight} stone={label.stone_weight} net={label.net_weight}
+      purity={label.purity} gross={label.gross_weight} stone={label.stone_weight} net={label.net_weight} date={date}
     />
   );
   if (style !== "fold" || combo) return <div className="tag-label" style={{ width: `${w}mm`, height: `${h}mm` }}>{front}</div>;
@@ -100,9 +106,9 @@ export default function TagLabel({ label, size = "small", style = "single", back
       <div className="h-full border-l border-dashed border-black/50" aria-hidden />
       {b ? (
         <Face
-          small={small} w={w} h={h} code={b.code} title={b.title} corner="Set"
+          small={small} w={w} h={h} code={b.code} title={b.title} corner="Combo"
           extra={`with ${b.piece_codes.filter((c) => c !== label.code).join(" + ")}`}
-          purity={b.purity} gross={b.gross_weight} stone={0} net={b.net_weight}
+          purity={b.purity} gross={b.gross_weight} stone={0} net={b.net_weight} date={date}
         />
       ) : (
         <div className="flex flex-col items-center justify-center bg-white text-center text-black" style={{ width: `${w}mm`, height: `${h}mm` }}>

@@ -26,8 +26,8 @@ M = 12 * mm
 INK, MUTED, LINE, ACCENT = HexColor("#1E1E1E"), HexColor("#6F6B62"), HexColor("#D9D5CB"), HexColor("#9F1D35")
 
 # x positions (right edge for numbers) of the item table
-COLS = [("#", M, "l"), ("Item", M + 7 * mm, "l"), ("HSN", M + 74 * mm, "l"), ("Gross", M + 101 * mm, "r"),
-        ("Stone", M + 116 * mm, "r"), ("Net", M + 131 * mm, "r"), ("Touch", M + 145 * mm, "r"),
+COLS = [("#", M, "l"), ("Item", M + 7 * mm, "l"), ("HSN", M + 66 * mm, "l"), ("Purity", M + 78 * mm, "l"), ("Gross", M + 101 * mm, "r"),
+        ("Less", M + 116 * mm, "r"), ("Net", M + 131 * mm, "r"), ("%", M + 145 * mm, "r"),
         ("Fine", M + 160 * mm, "r"), ("Amount", W - M, "r")]
 
 
@@ -170,25 +170,28 @@ class _Doc:
         y = self.table_head(self.party(self.header()))
         for line in b.lines:
             desc = f"{line.code}  {line.description}"
-            sub = [line.purity]
+            sub = []
             if line.kind == "COMBO":
                 sub += [f"{p.item_code} {p.name} · net {_g(p.net_weight)} @ {p.touch_percent:g}%"
                         + (f" · HUID {p.huid}" if p.huid else "") for p in line.pieces]
             elif line.pieces and line.pieces[0].huid:
                 sub.append(f"HUID {line.pieces[0].huid}")
+            if getattr(line, "stone_amount", 0):
+                sub.append(f"Stones ₹{_inr(line.stone_amount)}")
             if line.charges:
                 sub.append(f"Charges ₹{_inr(line.charges)}")
-            desc_lines = _wrap(desc, BOLD, 8.5, 65 * mm)
+            desc_lines = _wrap(desc, BOLD, 8.5, 57 * mm)
             need = (len(desc_lines) * 4 + len(sub) * 3.5 + 3) * mm
             if y - need < 70 * mm:
                 y = self.new_page()
             self.text(COLS[0][1], y, str(line.line_no), 8.5, color=MUTED)
             for i, dl in enumerate(desc_lines):
                 self.text(COLS[1][1], y - i * 4 * mm, dl, 8.5, bold=(i == 0))
-            vals = [line.hsn_code or "", _g(line.gross_weight), _g(line.stone_weight), _g(line.net_weight),
+            vals = [line.hsn_code or "", line.purity, _g(line.gross_weight), _g(line.stone_weight), _g(line.net_weight),
                     f"{line.touch_percent:g}", _g(line.fine_weight), _inr(line.amount)]
             for (label, x, al), v in zip(COLS[2:], vals):
-                self.text(x, y, v, 8.5, bold=(label in ("Fine", "Amount")), align=al)
+                self.text(x, y, v, 7.5 if label == "Purity" and len(v) > 4 else 8.5,
+                          bold=(label in ("Fine", "Amount")), align=al)
             yy = y - len(desc_lines) * 4 * mm
             for s in sub:
                 self.text(COLS[1][1], yy, s[:95], 7.5, color=MUTED)
@@ -202,15 +205,21 @@ class _Doc:
             y = self.new_page()
         self.rule(y + 3.2 * mm, INK, 0.8)
         self.text(COLS[1][1], y, f"{t.total_pieces} pieces", 8.5, True)
-        for (label, x, al), v in zip(COLS[3:8], [t.total_gross, t.total_stone, t.total_net, None, t.total_fine]):
+        for (label, x, al), v in zip(COLS[4:9], [t.total_gross, t.total_stone, t.total_net, None, t.total_fine]):
             if v is not None:
                 self.text(x, y, _g(v), 8.5, True, align=al)
-        self.text(W - M, y, _inr(t.subtotal), 8.5, True, align="r")
+        self.text(W - M, y, _inr(t.subtotal - (t.huid_amount or 0)), 8.5, True, align="r")
         y -= 8 * mm
 
         # totals box (right) and words / bank / terms (left)
-        rows = [(f"Metal ({_g(t.total_fine)} g x {_inr(b.gold_rate)})", _inr(t.metal_amount)),
-                ("Charges", _inr(t.total_charges)), ("Taxable value", _inr(t.subtotal))]
+        rows = [(f"Gold ({_g(t.total_fine)} g fine x {_inr(b.gold_rate)})", _inr(t.metal_amount))]
+        if t.stone_amount:
+            rows.append((f"Stones ({_g(t.total_stone)} g x {_inr(t.stone_rate)})", _inr(t.stone_amount)))
+        if t.huid_amount:
+            rows.append((f"HUID ({t.huid_pieces} x {_inr(t.huid_rate)})", _inr(t.huid_amount)))
+        if t.total_charges:
+            rows.append(("Other charges", _inr(t.total_charges)))
+        rows.append(("Taxable value", _inr(t.subtotal)))
         half = b.gst_percent / 2
         if t.tax_type == "INTER":
             rows.append((f"IGST {b.gst_percent:g}%", _inr(t.igst_amount)))

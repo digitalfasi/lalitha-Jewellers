@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { isManager, isOwner, useAuth } from "@/_shared/auth/AuthProvider";
 import { useT } from "@/_shared/i18n/LanguageProvider";
 import BusinessTab from "./BusinessTab";
+import ChargesTab from "./ChargesTab";
 import DeviceTab from "./DeviceTab";
 import PasswordTab from "./PasswordTab";
 import RateTab from "./RateTab";
@@ -12,6 +13,7 @@ import StaffTab from "./StaffTab";
 
 const TABS = [
   { id: "rate", label: "Gold rate", show: () => true },
+  { id: "charges", label: "Bill settings", show: () => true },
   { id: "device", label: "This device", show: () => true },
   { id: "business", label: "Business details", show: () => true },
   { id: "staff", label: "Staff", show: isOwner },
@@ -50,6 +52,7 @@ export default function SettingsPage() {
         ))}
       </div>
       {tab === "rate" && <RateTab canEdit={isManager(user)} />}
+      {tab === "charges" && <ChargesTab canEdit={isManager(user)} />}
       {tab === "device" && <DeviceTab />}
       {tab === "business" && <BusinessTab canEdit={isOwner(user)} />}
       {tab === "staff" && <StaffTab me={user} />}

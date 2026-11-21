@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import ScaleButton from "@/_shared/components/ScaleButton";
 import { Button, Field, Input, Notice, Select } from "@/_shared/components/ui";
+import { FEATURES } from "@/_shared/features";
 import { useT } from "@/_shared/i18n/LanguageProvider";
 import { PURITIES, grams, inventoryService } from "./inventoryService";
 import { PurityPicker, weightWarnings } from "./pieceHelpers";
@@ -18,7 +19,7 @@ const readPrintPref = () => {
   }
 };
 
-const EMPTY = { category_id: "", design_id: "", name: "", purity: "22K", gross_weight: "", stone_weight: "", touch_percent: "", remarks: "", huid: "", lot_id: "" };
+const EMPTY = { category_id: "", design_id: "", name: "", purity: "22K", gross_weight: "", stone_weight: "", touch_percent: "", cost_touch: "", remarks: "", huid: "", lot_id: "" };
 
 const fromPiece = (p) => ({
   category_id: p.category_id,
@@ -28,6 +29,7 @@ const fromPiece = (p) => ({
   gross_weight: String(p.gross_weight),
   stone_weight: p.stone_weight ? String(p.stone_weight) : "",
   touch_percent: p.touch_percent != null ? String(p.touch_percent) : "",
+  cost_touch: p.cost_touch != null ? String(p.cost_touch) : "",
   remarks: p.remarks || "",
   huid: p.huid || "",
   lot_id: p.lot_id || "",
@@ -62,7 +64,7 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
   }, [piece]);
 
   useEffect(() => {
-    inventoryService.listLots({ limit: 50 }).then(setLots).catch(() => setLots([]));
+    if (FEATURES.lots) inventoryService.listLots({ limit: 50 }).then(setLots).catch(() => setLots([]));
   }, []);
 
   useEffect(() => {
@@ -77,7 +79,8 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
   const category = categories.find((c) => c.id === form.category_id);
   const design = designs.find((d) => d.id === form.design_id);
 
-  // Picking a design names the piece ("Rope chain") and fills its usual touch %, if those are empty.
+  // Picking a sub-category fills its usual %. The name, when left blank, is the sub-category's.
+  const usualOf = (d) => d?.default_percent ?? d?.usual_touch ?? null;
   const pickDesign = (e) => {
     const id = e.target.value;
     const d = designs.find((x) => x.id === id);
@@ -85,8 +88,7 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
     setForm((f) => ({
       ...f,
       design_id: id,
-      name: f.name || !d ? f.name : `${d.name} ${(category?.name || "").toLowerCase()}`,
-      touch_percent: f.touch_percent || d?.usual_touch == null ? f.touch_percent : String(d.usual_touch),
+      touch_percent: usualOf(d) == null ? f.touch_percent : String(usualOf(d)),
     }));
   };
 
@@ -97,10 +99,11 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
     return Number.isFinite(g) && Number.isFinite(s) ? Math.round((g - s) * 1000) / 1000 : null;
   }, [form.gross_weight, form.stone_weight]);
   const netBad = net !== null && net <= 0;
+  const fine = net !== null && form.touch_percent ? Math.round(net * parseFloat(form.touch_percent) * 10) / 1000 : null;
 
   const submit = async (e) => {
     e.preventDefault();
-    if (netBad) return setError(t("Stone weight must be less than gross weight."));
+    if (netBad) return setError(t("Less must be under the gross weight."));
     // "Does this look right?" - once. Pressing Save again goes ahead.
     const warnings = weightWarnings({ gross: parseFloat(form.gross_weight), stone: parseFloat(form.stone_weight || "0"),
       touch: form.touch_percent ? parseFloat(form.touch_percent) : null, design, t });
@@ -109,21 +112,21 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
     setError(null);
     const body = {
       design_id: form.design_id || null,
-      name: form.name,
+      name: form.name.trim() || null,
       purity: form.purity,
       gross_weight: parseFloat(form.gross_weight),
       stone_weight: form.stone_weight ? parseFloat(form.stone_weight) : 0,
       touch_percent: form.touch_percent ? parseFloat(form.touch_percent) : null,
       remarks: form.remarks || null,
       huid: form.huid || null,
-      lot_id: form.lot_id || null,
     };
+    if (FEATURES.lots) Object.assign(body, { cost_touch: form.cost_touch ? parseFloat(form.cost_touch) : null, lot_id: form.lot_id || null });
     try {
       const saved = editing
         ? await inventoryService.updatePiece(piece.id, body)
         : await inventoryService.createPiece({ ...body, category_id: form.category_id });
       // Keep what the next piece of the delivery probably shares.
-      if (!editing) setForm((f) => ({ ...EMPTY, category_id: f.category_id, design_id: f.design_id, purity: f.purity, lot_id: f.lot_id, touch_percent: f.touch_percent, name: f.design_id ? f.name : "" }));
+      if (!editing) setForm((f) => ({ ...EMPTY, category_id: f.category_id, design_id: f.design_id, purity: f.purity, lot_id: f.lot_id, touch_percent: f.touch_percent }));
       setWarned(null);
       if (!editing) setLastSaved(saved);
       onSaved(saved, editing, printAfter);
@@ -143,7 +146,7 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
 
   const toggle = !editing && (
     <div className="flex rounded-lg border border-line bg-canvas p-0.5 text-sm" role="tablist" aria-label={t("What are you adding?")}>
-      {[["piece", "One piece"], ["set", "A set"]].map(([id, label]) => (
+      {[["piece", "One piece"], ["set", "A combo"]].map(([id, label]) => (
         <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
           className={`flex-1 rounded-md px-3 py-1.5 ${mode === id ? "bg-surface font-medium shadow-sm" : "text-muted"}`}>
           {t(label)}
@@ -158,7 +161,7 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
         {!hideTitle && <h2 className="font-semibold">{t("Add stock")}</h2>}
         {toggle}
         {lastSaved?.combo_code && (
-          <Notice onClose={() => setLastSaved(null)}>{t("Saved set {set}: {codes}", { set: lastSaved.combo_code, codes: lastSaved.pieces.map((x) => x.item_code).join(" + ") })}</Notice>
+          <Notice onClose={() => setLastSaved(null)}>{t("Saved combo {set}: {codes}", { set: lastSaved.combo_code, codes: lastSaved.pieces.map((x) => x.item_code).join(" + ") })}</Notice>
         )}
         <SetForm categories={categories} footer={printBox} onSaved={(combo) => { setLastSaved(combo); onSetSaved(combo, printAfter); }} />
       </div>
@@ -194,17 +197,13 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
         </Select>
       </Field>
 
-      <Field label={t("Design")} hint={design?.usual_touch != null ? t("Usually {touch}% touch, about {net} g net", { touch: design.usual_touch, net: grams(design.typical_net) }) : t("Optional")}>
+      <Field label={t("Sub-category")} hint={usualOf(design) != null ? t("Usually {p}%", { p: usualOf(design) }) : t("Optional")}>
         <Select value={form.design_id} onChange={pickDesign} disabled={!form.category_id}>
           <option value="">{t("None")}</option>
           {designs.map((d) => (
-            <option key={d.id} value={d.id}>{d.name}{d.design_no ? ` · ${d.design_no}` : ""}</option>
+            <option key={d.id} value={d.id}>{d.name}{usualOf(d) != null ? ` · ${usualOf(d)}%` : ""}</option>
           ))}
         </Select>
-      </Field>
-
-      <Field label={t("Name")}>
-        <Input value={form.name} onChange={set("name")} placeholder={t("e.g. Rope chain")} required minLength={2} />
       </Field>
 
       <Field label={t("Purity")}>
@@ -218,7 +217,7 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
             <ScaleButton onWeight={(g) => { setWarned(null); setForm((f) => ({ ...f, gross_weight: String(g) })); }} />
           </div>
         </Field>
-        <Field label={t("Stone (g)")}>
+        <Field label={t("Less (g)")} hint={t("Stones and other non-gold")}>
           <div className="flex gap-1">
             <Input type="number" inputMode="decimal" step="0.001" min="0" value={form.stone_weight} onChange={set("stone_weight")} placeholder="0" className="text-base" />
             <ScaleButton onWeight={(g) => { setWarned(null); setForm((f) => ({ ...f, stone_weight: String(g) })); }} />
@@ -232,28 +231,42 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
             {net === null ? "—" : grams(net)}
           </div>
         </Field>
-        <Field label={t("Touch %")} hint={t("Optional")}>
-          <Input type="number" inputMode="decimal" step="0.01" min="0" max="200" value={form.touch_percent} onChange={set("touch_percent")} placeholder="92" className="text-base" />
+        <Field label="%" hint={t("Fine = net x % / 100")}>
+          <Input type="number" inputMode="decimal" step="0.01" min="0" max="200" value={form.touch_percent} onChange={set("touch_percent")} placeholder="103" className="text-base" />
         </Field>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
+        <Field label={t("Fine (g)")}>
+          <div className="flex h-9 items-center rounded-lg bg-canvas px-3 text-base font-semibold tabular-nums">{fine === null ? "—" : grams(fine)}</div>
+        </Field>
         <Field label="HUID" hint={t("Hallmark ID, 6 characters")}>
           <Input value={form.huid} onChange={(e) => setForm({ ...form, huid: e.target.value.toUpperCase() })} maxLength={6}
             pattern="[A-Za-z0-9]{6}" className="font-mono uppercase" placeholder={t("Optional")} />
         </Field>
-        <Field label={t("Lot")} hint={t("Delivery it came in")}>
-          <Select value={form.lot_id} onChange={set("lot_id")}>
-            <option value="">{t("None")}</option>
-            {lots.map((l) => (
-              <option key={l.id} value={l.id}>{l.lot_no}{l.karigar_name ? ` · ${l.karigar_name}` : ""}</option>
-            ))}
-          </Select>
-        </Field>
       </div>
 
-      <details className="text-sm" open={Boolean(form.remarks)}>
-        <summary className="cursor-pointer text-muted">{t("More (remarks)")}</summary>
+      {FEATURES.lots && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={t("Cost touch % (karigar)")}>
+            <Input type="number" inputMode="decimal" step="0.01" min="0" max="200" value={form.cost_touch} onChange={set("cost_touch")} className="text-base" />
+          </Field>
+          <Field label={t("Lot")}>
+            <Select value={form.lot_id} onChange={set("lot_id")}>
+              <option value="">{t("None")}</option>
+              {lots.map((l) => (
+                <option key={l.id} value={l.id}>{l.lot_no}{l.karigar_name ? ` · ${l.karigar_name}` : ""}</option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      )}
+
+      <details className="text-sm" open={Boolean(form.remarks) || (editing && form.name !== (design?.name || category?.name))}>
+        <summary className="cursor-pointer text-muted">{t("More (name, remarks)")}</summary>
+        <Field label={t("Name")} hint={t("Blank = the sub-category name, e.g. {n}", { n: design?.name || category?.name || "Dollar" })} className="mt-2">
+          <Input value={form.name} onChange={set("name")} maxLength={150} />
+        </Field>
         <Field label={t("Remarks")} hint={t("Optional")} className="mt-2">
           <Input value={form.remarks} onChange={set("remarks")} maxLength={1000} />
         </Field>

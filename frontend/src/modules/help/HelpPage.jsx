@@ -1,5 +1,6 @@
 "use client";
 
+import { FEATURES } from "@/_shared/features";
 import Link from "next/link";
 import { Link2, PackagePlus, Printer, Receipt, ScanLine, Tag, Undo2 } from "lucide-react";
 import { useT } from "@/_shared/i18n/LanguageProvider";
@@ -11,7 +12,7 @@ const GUIDES = [
     id: "stock", icon: PackagePlus, title: "Add new stock", link: "/inventory",
     steps: [
       "Open Stock.",
-      "Choose One piece, or A set if the pieces come together (chain + pendant).",
+      "Choose One piece, or A combo if the pieces come together (chain + pendant).",
       "Choose the category and the design. The name and touch fill in by themselves.",
       "Tap the purity, then put the piece on the scale and press Scale (or type the gross weight).",
       "Type the HUID if the piece has one.",
@@ -20,12 +21,12 @@ const GUIDES = [
     ],
   },
   {
-    id: "set", icon: Link2, title: "Make a set from stock", link: "/inventory?pick=1",
+    id: "set", icon: Link2, title: "Make a combo from stock", link: "/inventory?pick=1",
     steps: [
       "Open Stock.",
-      "Tick the box next to each piece of the set (for example a chain and a pendant).",
-      "Press Make a set at the top.",
-      "New tags print: the piece on the front, the set on the back. Fold them on the dashed line and tie them on.",
+      "Tick the box next to each piece of the combo (for example a chain and a pendant).",
+      "Press Make a combo at the top.",
+      "New tags print: the piece on the front, the combo on the back. Fold them on the dashed line and tie them on.",
     ],
   },
   {
@@ -33,8 +34,8 @@ const GUIDES = [
     steps: [
       "Open Billing and press New bill.",
       "Step 1: tap the shop.",
-      "Step 2: scan each tag. Scanning one piece of a set adds the whole set.",
-      "To bill a set's pieces on separate lines, press Split.",
+      "Step 2: scan each tag. Scanning one piece of a combo adds the whole combo.",
+      "To bill a combo's pieces on separate lines, press Split.",
       "Type the charges for each line if there are any.",
       "Step 3: check the total and press Save bill.",
       "On the bill, press Print, Download PDF or WhatsApp.",
@@ -61,7 +62,7 @@ const GUIDES = [
     id: "undo", icon: Undo2, title: "If you made a mistake", link: null,
     steps: [
       "Removed a line from a bill by mistake: press Undo straight away.",
-      "Took a piece out of a set by mistake: press Undo on the set's page.",
+      "Took a piece out of a combo by mistake: press Undo on the combo's page.",
       "Wrong weight on a piece: open Stock, press Edit on the piece, fix it, save, and print the tag again.",
       "A saved bill is wrong: ask a manager to cancel it. Everything goes back in stock, then make the bill again.",
     ],
@@ -83,12 +84,12 @@ export default function HelpPage() {
       </div>
 
       <nav className="no-print flex flex-wrap gap-2">
-        {GUIDES.map((g) => (
+        {GUIDES.filter((g) => FEATURES.stockCount || g.id !== "count").map((g) => (
           <a key={g.id} href={`#${g.id}`} className="rounded-full border border-line bg-surface px-3 py-1 text-sm hover:border-accent">{t(g.title)}</a>
         ))}
       </nav>
 
-      {GUIDES.map(({ id, icon: Icon, title, link, steps }) => (
+      {GUIDES.filter((g) => FEATURES.stockCount || g.id !== "count").map(({ id, icon: Icon, title, link, steps }) => (
         <section key={id} id={id} className="break-inside-avoid rounded-2xl border border-line bg-surface p-5 print:break-after-page print:border-0">
           <div className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-xl font-semibold">

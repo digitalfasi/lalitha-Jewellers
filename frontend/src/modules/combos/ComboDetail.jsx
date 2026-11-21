@@ -9,6 +9,7 @@ import { grams } from "@/modules/inventory/inventoryService";
 import { COMBO_STATUS_LABEL, comboService, when } from "./comboService";
 import PiecePicker from "./PiecePicker";
 import { useTagPrinter } from "@/modules/tags/TagPrinter";
+import { tagService } from "@/modules/tags/tagService";
 
 const EVENT_TEXT = {
   CREATED: () => "Created",
@@ -37,13 +38,22 @@ export default function ComboDetail({ combo, onChanged }) {
     comboService.history(combo.id).then(setHistory).catch(() => setHistory([]));
   }, [combo]);
 
+  // Tags of this combo's pieces (and of pieces that just left it) that no longer match.
+  useEffect(() => {
+    const load = () => tagService.pending()
+      .then((list) => setReprint(list.filter((x) => x.combo_code === combo.combo_code || x.back_was_code === combo.combo_code)))
+      .catch(() => setReprint([]));
+    load();
+    window.addEventListener("tags:changed", load);
+    return () => window.removeEventListener("tags:changed", load);
+  }, [combo]);
+
   useEffect(() => {
     setSwapFor(null);
     setConfirmDissolve(false);
     setNotice(null);
     setNote("");
     setRenameOffer(false);
-    setReprint([]);
     setUndoUnlink(null);
   }, [combo.id]);
 
@@ -51,14 +61,8 @@ export default function ComboDetail({ combo, onChanged }) {
     setBusy(true);
     setNotice(null);
     try {
-      const before = combo.pieces.map((p) => p.item_code);
       const updated = await fn();
       setNotice({ tone: "ok", text: okText });
-      // Every piece that was or is in the set carries the set on its tag's back.
-      if (piecesChanged) {
-        const now = updated.pieces.map((p) => p.item_code);
-        setReprint([...new Set([...before, ...now])]);
-      }
       setRenameOffer(piecesChanged && updated.status === "ACTIVE" && !!updated.name && updated.name !== updated.suggested_name);
       setSwapFor(null);
       setConfirmDissolve(false);
@@ -108,14 +112,21 @@ export default function ComboDetail({ combo, onChanged }) {
       )}
       {printer}
       {reprint.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <span>
-            The set changed, so these tags are out of date: <b className="font-mono">{reprint.join(", ")}</b>.
-          </span>
-          <span className="flex gap-3">
-            <Button variant="link" onClick={() => { printTags(reprint); setReprint([]); }}>Print new tags</Button>
-            <Button variant="link" className="text-muted" onClick={() => setReprint([])} title="They stay in Tags → Tags to print">Later</Button>
-          </span>
+        <div className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <b>{reprint.length === 1 ? "1 tag needs printing" : `${reprint.length} tags need printing`}</b>
+            <Button onClick={() => printTags(reprint.map((x) => x.code))}>
+              Reprint {reprint.length} {reprint.length === 1 ? "tag" : "tags"}
+            </Button>
+          </div>
+          <ul className="text-xs">
+            {reprint.map((x) => (
+              <li key={x.code}>
+                <b className="font-mono">{x.code}</b>{" "}
+                {x.state === "NEW" ? "has no tag yet" : <>back: <s>{x.back_was || "no combo"}</s> → <b>{x.back_now || "no combo (take the old tag off)"}</b></>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {renameOffer && (

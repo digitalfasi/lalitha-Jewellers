@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -58,6 +59,18 @@ class PendingTagOut(BaseModel):
     code: str
     name: str
     category_name: str
+    design_name: Optional[str] = None
     state: Literal["NEW", "COMBO_CHANGED"]
     note: str
     combo_code: Optional[str] = None
+    back_was_code: Optional[str] = None  # combo on the old tag's back
+    back_was: Optional[str] = None       # "CB0012 with CH0002 + PD0001"
+    back_now: Optional[str] = None       # "CB0012 with CH0002 + ST0002"
+
+
+class TagPrintOut(BaseModel):
+    printed_at: datetime
+    reason: Literal["NEW", "COMBO_CHANGED", "REPRINT"]
+    back_code: Optional[str] = None
+    back_with: Optional[str] = None
+    by_name: Optional[str] = None

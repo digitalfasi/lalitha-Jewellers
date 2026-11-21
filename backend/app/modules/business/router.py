@@ -3,8 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._shared.core.database import get_async_db
 from app.modules.auth.deps import require_role
-from app.modules.auth.model import ROLE_OWNER
-from app.modules.business.schema import BusinessIn, BusinessOut
+from app.modules.auth.model import MANAGERS, ROLE_OWNER
+from app.modules.business.schema import BusinessIn, BusinessOut, ChargesIn
 from app.modules.business.service import BusinessService
 
 # Everyone signed in can read (bills print it); only the owner edits.
@@ -20,6 +20,12 @@ async def get_business(db: AsyncSession = Depends(get_async_db)):
 @router.put("", response_model=BusinessOut, dependencies=owner_only)
 async def save_business(data: BusinessIn, db: AsyncSession = Depends(get_async_db)):
     return await BusinessService.save(db, data)
+
+
+@router.put("/charges", response_model=BusinessOut, dependencies=[Depends(require_role(*MANAGERS))])
+async def save_charges(data: ChargesIn, db: AsyncSession = Depends(get_async_db)):
+    """HSN, HUID and stone rates, making on/off: the owner's bill settings."""
+    return await BusinessService.save_charges(db, data)
 
 
 @router.post("/logo", response_model=BusinessOut, dependencies=owner_only)

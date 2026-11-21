@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app._shared.models.base import Base, TimestampMixin
@@ -34,6 +34,13 @@ class Shop(Base, TimestampMixin):
     city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     # GST state code (two digits, e.g. 33 = Tamil Nadu). Taken from the GSTIN when there is one.
     state_code: Mapped[Optional[str]] = mapped_column(String(2), nullable=True)
+    # The shop's usual deal, filled in on its bills and in the calculator.
+    price_mode: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # TOUCH / WASTAGE
+    deal_touch: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
+    deal_wastage: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
+    deal_making: Mapped[Optional[Decimal]] = mapped_column(MONEY, nullable=True)  # Rs per gram
+    # Settles in fine gold: each bill adds its fine weight to the shop's gold account.
+    settles_in_gold: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
@@ -70,6 +77,12 @@ class Bill(Base, TimestampMixin):
     total_fine: Mapped[Decimal] = mapped_column(WEIGHT, nullable=False)
     metal_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     total_charges: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    # Stones: less weight x Rs per gram. HUID: hallmarked pieces x Rs per piece.
+    stone_rate: Mapped[Decimal] = mapped_column(MONEY, nullable=False, default=0, server_default="0")
+    stone_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False, default=0, server_default="0")
+    huid_rate: Mapped[Decimal] = mapped_column(MONEY, nullable=False, default=0, server_default="0")
+    huid_pieces: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    huid_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False, default=0, server_default="0")
     subtotal: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     gst_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     # INTRA = CGST + SGST (same state), INTER = IGST (different state).
@@ -112,6 +125,7 @@ class BillLine(Base):
     fine_weight: Mapped[Decimal] = mapped_column(WEIGHT, nullable=False)
     metal_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     charges: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    stone_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False, default=0, server_default="0")
     amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
 
     pieces: Mapped[List["BillLinePiece"]] = relationship(lazy="selectin")
@@ -146,3 +160,56 @@ class BillLinePiece(Base):
     fine_weight: Mapped[Decimal] = mapped_column(WEIGHT, nullable=False)
     huid: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+ESTIMATE_COUNTER_KEY = "ESTM"
+ESTIMATE_OPEN = "OPEN"
+ESTIMATE_BILLED = "BILLED"
+
+
+class Estimate(Base, TimestampMixin):
+    """A saved quote (EST-00001): what was offered, at which rate, until when.
+    Turned into a bill with one tap when the shop agrees; nothing is reserved."""
+    __tablename__ = "estimates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    estimate_number: Mapped[str] = mapped_column(String(20), nullable=False, unique=True, index=True)
+    shop_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("shops.id", ondelete="RESTRICT"), nullable=True, index=True)
+    shop_name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    estimate_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+    gold_rate: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    gst_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    lines: Mapped[list] = mapped_column(JSON, nullable=False)  # BillLineIn dicts, as entered
+    total_fine: Mapped[Decimal] = mapped_column(WEIGHT, nullable=False)
+    grand_total: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default=ESTIMATE_OPEN)
+    bill_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("bills.id", ondelete="SET NULL"), nullable=True)
+    remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+
+GOLD_BILL = "BILL"            # a bill: the shop owes its fine gold
+GOLD_BILL_CANCEL = "CANCEL"   # that bill cancelled
+GOLD_IN = "GOLD"              # the shop gave gold
+CASH_IN = "CASH"              # the shop gave cash, counted as fine at the day's rate
+GOLD_ADJUST = "ADJUST"        # opening balance or correction
+
+
+class GoldEntry(Base, TimestampMixin):
+    """One line of a shop's fine-gold account. fine > 0: the shop owes more; < 0: it paid."""
+    __tablename__ = "gold_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    shop_id: Mapped[str] = mapped_column(String(36), ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    fine: Mapped[Decimal] = mapped_column(WEIGHT, nullable=False)
+    gold_weight: Mapped[Optional[Decimal]] = mapped_column(WEIGHT, nullable=True)
+    purity_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
+    cash: Mapped[Optional[Decimal]] = mapped_column(MONEY, nullable=True)
+    rate: Mapped[Optional[Decimal]] = mapped_column(MONEY, nullable=True)
+    bill_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("bills.id", ondelete="RESTRICT"), nullable=True, index=True)
+    bill_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

@@ -7,6 +7,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.billing.router import router as billing_router
 from app.modules.business.router import router as business_router
 from app.modules.calc.router import router as calc_router
+from app.modules.reports.router import router as reports_router
 from app.modules.combos.router import router as combos_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.rates.router import router as rates_router
@@ -22,5 +23,5 @@ api_router.include_router(auth_router)
 # higher role (manager / owner) add require_role on top.
 signed_in = [Depends(current_user)]
 for r in (inventory_router, combos_router, tags_router, billing_router, rates_router, business_router, audit_router,
-          calc_router):
+          calc_router, reports_router):
     api_router.include_router(r, dependencies=signed_in)

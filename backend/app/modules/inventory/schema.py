@@ -68,6 +68,7 @@ class DesignCreate(BaseModel):
     category_id: str
     name: str = Field(..., min_length=2, max_length=150)
     design_no: Optional[str] = Field(None, max_length=50)
+    default_percent: Optional[float] = Field(None, gt=0, le=200, description="Usual % for this sub-category")
 
     _s = field_validator("name", "design_no", mode="before")(_strip)
 
@@ -75,6 +76,7 @@ class DesignCreate(BaseModel):
 class DesignUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=150)
     design_no: Optional[str] = Field(None, max_length=50)
+    default_percent: Optional[float] = Field(None, gt=0, le=200)
     is_active: Optional[bool] = None
 
     _s = field_validator("name", "design_no", mode="before")(_strip)
@@ -88,6 +90,7 @@ class DesignOut(BaseModel):
     category_name: str
     name: str
     design_no: Optional[str]
+    default_percent: Optional[float] = None
     is_active: bool
     in_stock_count: int = 0
     # Learned from pieces already entered with this design, to help the next entry:
@@ -102,11 +105,12 @@ class PieceCreate(BaseModel):
     """No item_code here: the server always allocates it from the category."""
     category_id: str
     design_id: Optional[str] = None
-    name: str = Field(..., min_length=2, max_length=150)
+    name: Optional[str] = Field(None, max_length=150, description="Blank = the sub-category or category name")
     purity: Purity
     gross_weight: float = Field(..., gt=0, le=100000)
     stone_weight: float = Field(0, ge=0)
     touch_percent: Optional[float] = Field(None, gt=0, le=200)
+    cost_touch: Optional[float] = Field(None, gt=0, le=200, description="Touch the karigar charged (purchase)")
     remarks: Optional[str] = Field(None, max_length=1000)
     huid: Optional[str] = Field(None, max_length=6, description="Hallmark Unique ID")
     lot_id: Optional[str] = None
@@ -123,6 +127,7 @@ class PieceUpdate(BaseModel):
     gross_weight: Optional[float] = Field(None, gt=0, le=100000)
     stone_weight: Optional[float] = Field(None, ge=0)
     touch_percent: Optional[float] = Field(None, gt=0, le=200)
+    cost_touch: Optional[float] = Field(None, gt=0, le=200, description="Touch the karigar charged (purchase)")
     remarks: Optional[str] = Field(None, max_length=1000)
     huid: Optional[str] = Field(None, max_length=6)
     lot_id: Optional[str] = None
@@ -145,6 +150,7 @@ class PieceOut(BaseModel):
     stone_weight: float
     net_weight: float
     touch_percent: Optional[float]
+    cost_touch: Optional[float] = None
     status: PieceStatus
     remarks: Optional[str]
     huid: Optional[str] = None
@@ -197,6 +203,7 @@ class KarigarOut(BaseModel):
 class LotCreate(BaseModel):
     karigar_id: Optional[str] = None
     received_on: Optional[date] = None
+    gold_given_fine: Optional[float] = Field(None, ge=0, le=1_000_000, description="Fine grams given to the karigar")
     remarks: Optional[str] = Field(None, max_length=1000)
 
     _s = field_validator("remarks", mode="before")(_strip)
@@ -205,6 +212,7 @@ class LotCreate(BaseModel):
 class LotUpdate(BaseModel):
     karigar_id: Optional[str] = None
     received_on: Optional[date] = None
+    gold_given_fine: Optional[float] = Field(None, ge=0, le=1_000_000)
     remarks: Optional[str] = Field(None, max_length=1000)
 
     _s = field_validator("remarks", mode="before")(_strip)
@@ -222,3 +230,8 @@ class LotOut(BaseModel):
     in_stock_count: int = 0
     total_gross: float = 0
     total_net: float = 0
+    # Karigar check: fine given vs fine that came back (net x cost touch of the lot's pieces).
+    gold_given_fine: Optional[float] = None
+    returned_fine: float = 0
+    pieces_without_cost_touch: int = 0
+    karigar_balance: Optional[float] = None  # > 0: the karigar still holds our gold

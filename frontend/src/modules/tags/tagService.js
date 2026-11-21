@@ -5,6 +5,8 @@ export const tagService = {
   // expandCombos: a combo code becomes its pieces' tags (for fold-over tags).
   labels: (codes, expandCombos = false) => api("/tags/labels", { method: "POST", body: { codes, expand_combos: expandCombos } }),
   pending: () => api("/tags/pending"),
+  // Every tag printed for a piece, newest first: NEW, COMBO_CHANGED or REPRINT.
+  history: (code) => api(`/tags/history/${encodeURIComponent(code.trim())}`),
   markPrinted: async (codes) => {
     const out = await api("/tags/printed", { method: "POST", body: { codes } });
     if (typeof window !== "undefined") window.dispatchEvent(new Event("tags:changed"));
@@ -20,7 +22,7 @@ export const LABEL_SIZES = {
 };
 
 export const TAG_STYLES = {
-  fold: "Fold-over: piece front, set back",
+  fold: "Fold-over: piece front, combo back",
   single: "Single side",
 };
 

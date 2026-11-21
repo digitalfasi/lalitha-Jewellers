@@ -79,13 +79,14 @@ async def test_tags_to_print_follow_combo_changes(client):
     # Swap PD0001 out for PD0002: both pendants' tags are now wrong on the back.
     await client.post(f"{COMBOS}/{combo['id']}/swap", json={"out_code": "PD0001", "in_code": "PD0002"})
     pending = await _pending(client)
-    assert set(pending) == {"PD0001", "PD0002"}
+    assert set(pending) == {"CH0001", "PD0001", "PD0002"}
     assert "no longer in a combo" in pending["PD0001"]["note"]
     assert "Now in CB0001" in pending["PD0002"]["note"]
-    # The chain's back still says CB0001, which is still right.
-    assert "CH0001" not in pending
+    # The chain stays in CB0001, but its back says "with PD0001", which has left.
+    assert pending["CH0001"]["back_was"] == "CB0001 with PD0001"
+    assert pending["CH0001"]["back_now"] == "CB0001 with PD0002"
 
-    await client.post(f"{TAGS}/printed", json={"codes": ["PD0001", "PD0002"]})
+    await client.post(f"{TAGS}/printed", json={"codes": ["PD0001", "CB0001"]})
     assert await _pending(client) == {}
 
 

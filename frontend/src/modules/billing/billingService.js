@@ -20,6 +20,15 @@ export const billingService = {
   billPdf: (id) => apiBlob(`/billing/bills/${id}/pdf`),
   emailBill: (id, to, message) => api(`/billing/bills/${id}/email`, { method: "POST", body: { to, message: message || null } }),
   pieceBills: (code) => api(`/billing/piece-bills/${encodeURIComponent(code)}`),
+
+  quickQuote: (body) => api("/billing/quick-quote", { method: "POST", body }),
+  createEstimate: (body) => api("/billing/estimates", { method: "POST", body }),
+  listEstimates: (params) => api(`/billing/estimates${qs(params)}`),
+  getEstimate: (id) => api(`/billing/estimates/${id}`),
+  goldAccount: (shopId) => api(`/billing/shops/${shopId}/gold`),
+  addGold: (shopId, body) => api(`/billing/shops/${shopId}/gold`, { method: "POST", body }),
+  removeGold: (shopId, entryId) => api(`/billing/shops/${shopId}/gold/${entryId}`, { method: "DELETE" }),
+  profit: (params) => api(`/reports/profit${qs(params)}`),
 };
 
 const inrFmt = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

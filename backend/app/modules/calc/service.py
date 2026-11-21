@@ -34,18 +34,23 @@ def fine(data: FineIn) -> FineOut:
         touch = touch_from_wastage(data.purity, d(data.wastage_percent))
     else:
         touch = d(data.touch_percent)
+    touch = max(touch - d(data.touch_discount), Decimal("0"))
     fine_g = fine_of(net, touch)
     rate = d(data.gold_rate)
     metal = q2(fine_g * rate)
     making = making_for(net, d(data.making_per_gram)) if data.making_per_gram else Decimal("0.00")
     other = q2(d(data.other_charges))
-    subtotal = metal + making + other
+    stones = q2(d(data.stone_amount))
+    hallmark = q2(d(data.hallmark_rate) * data.hallmark_pieces)
+    discount = min(q2(d(data.discount_amount)), metal + making + stones + hallmark + other)
+    subtotal = metal + making + stones + hallmark + other - discount
     gst = q2(subtotal * d(data.gst_percent) / HUNDRED)
     cgst, sgst, igst = gst_split(gst, data.interstate)
     total, round_off = _rupee(subtotal + gst)
     return FineOut(
         net_weight=net, net_pavan=pavan(net), touch_percent=touch, fine_weight=fine_g, fine_pavan=pavan(fine_g),
-        metal_amount=metal, making_amount=making, other_charges=other, subtotal=subtotal,
+        metal_amount=metal, making_amount=making, stone_amount=stones, hallmark_amount=hallmark,
+        discount_amount=discount, other_charges=other, subtotal=subtotal,
         gst_amount=gst, cgst_amount=cgst, sgst_amount=sgst, igst_amount=igst,
         round_off=round_off, total=total,
         # Per gram of the piece's own (net) weight, the way shops compare prices.

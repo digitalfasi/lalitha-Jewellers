@@ -70,7 +70,7 @@ export default function CataloguePage() {
 
       <div className="no-print flex flex-wrap gap-2">
         <Select value={show} onChange={(e) => setShow(e.target.value)} className="w-40" aria-label="Show">
-          <option value="sets">Sets (combos)</option>
+          <option value="sets">Combos</option>
           <option value="pieces">Single pieces</option>
           <option value="both">Both</option>
         </Select>

@@ -208,12 +208,13 @@ export default function BillView({ id }) {
               <th className="py-2 pr-2">#</th>
               <th className="py-2 pr-2">Item</th>
               <th className="py-2 pr-2">HSN</th>
+              <th className="py-2 pr-2">Purity</th>
               <th className="py-2 pr-2 text-right">Gross</th>
-              <th className="py-2 pr-2 text-right">Stone</th>
+              <th className="py-2 pr-2 text-right">Less</th>
               <th className="py-2 pr-2 text-right">Net</th>
-              <th className="py-2 pr-2 text-right">Touch</th>
+              <th className="py-2 pr-2 text-right">%</th>
               <th className="py-2 pr-2 text-right">Fine</th>
-              <th className="py-2 pr-2 text-right">Charges</th>
+              <th className="py-2 pr-2 text-right">Stones ₹</th>
               <th className="py-2 text-right">Amount</th>
             </tr>
           </thead>
@@ -223,10 +224,7 @@ export default function BillView({ id }) {
                 <td className="py-2 pr-2 text-muted">{l.line_no}</td>
                 <td className="py-2 pr-2">
                   <span className="font-mono font-semibold">{l.code}</span> {l.description}
-                  <div className="text-xs text-muted">
-                    {l.purity}
-                    {l.kind === "PIECE" && l.pieces[0]?.huid && ` · HUID ${l.pieces[0].huid}`}
-                  </div>
+                  {l.kind === "PIECE" && l.pieces[0]?.huid && <div className="text-xs text-muted">HUID {l.pieces[0].huid}</div>}
                   {l.kind === "COMBO" && (
                     <ul className="mt-1 text-xs text-muted">
                       {l.pieces.map((p) => (
@@ -239,12 +237,13 @@ export default function BillView({ id }) {
                   )}
                 </td>
                 <td className="py-2 pr-2 font-mono text-xs">{l.hsn_code || "—"}</td>
+                <td className="py-2 pr-2 font-medium">{l.purity}</td>
                 <td className="py-2 pr-2 text-right">{grams(l.gross_weight)}</td>
                 <td className="py-2 pr-2 text-right">{grams(l.stone_weight)}</td>
                 <td className="py-2 pr-2 text-right">{grams(l.net_weight)}</td>
                 <td className="py-2 pr-2 text-right">{pct(l.touch_percent)}</td>
                 <td className="py-2 pr-2 text-right font-medium">{grams(l.fine_weight)}</td>
-                <td className="py-2 pr-2 text-right">{num2(l.charges)}</td>
+                <td className="py-2 pr-2 text-right">{num2((l.stone_amount || 0) + l.charges)}</td>
                 <td className="py-2 text-right font-medium">{num2(l.amount)}</td>
               </tr>
             ))}
@@ -254,13 +253,14 @@ export default function BillView({ id }) {
               <td />
               <td className="py-2 pr-2">{t.total_pieces} pieces</td>
               <td />
+              <td />
               <td className="py-2 pr-2 text-right">{grams(t.total_gross)}</td>
               <td className="py-2 pr-2 text-right">{grams(t.total_stone)}</td>
               <td className="py-2 pr-2 text-right">{grams(t.total_net)}</td>
               <td />
               <td className="py-2 pr-2 text-right">{grams(t.total_fine)}</td>
-              <td className="py-2 pr-2 text-right">{num2(t.total_charges)}</td>
-              <td className="py-2 text-right">{num2(t.subtotal)}</td>
+              <td className="py-2 pr-2 text-right">{num2((t.stone_amount || 0) + t.total_charges)}</td>
+              <td className="py-2 text-right">{num2(t.subtotal - (t.huid_amount || 0))}</td>
             </tr>
           </tfoot>
         </table>
@@ -284,8 +284,10 @@ export default function BillView({ id }) {
             )}
           </div>
           <dl className="grid min-w-72 grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm tabular-nums">
-            <dt className="text-muted">Metal ({grams(t.total_fine)} g × {num2(bill.gold_rate)})</dt><dd className="text-right">{inr(t.metal_amount)}</dd>
-            <dt className="text-muted">Charges</dt><dd className="text-right">{inr(t.total_charges)}</dd>
+            <dt className="text-muted">Gold ({grams(t.total_fine)} g fine × {num2(bill.gold_rate)})</dt><dd className="text-right">{inr(t.metal_amount)}</dd>
+            {t.stone_amount > 0 && <><dt className="text-muted">Stones ({grams(t.total_stone)} g × {num2(t.stone_rate)})</dt><dd className="text-right">{inr(t.stone_amount)}</dd></>}
+            {t.huid_amount > 0 && <><dt className="text-muted">HUID ({t.huid_pieces} × {num2(t.huid_rate)})</dt><dd className="text-right">{inr(t.huid_amount)}</dd></>}
+            {t.total_charges > 0 && <><dt className="text-muted">Other charges</dt><dd className="text-right">{inr(t.total_charges)}</dd></>}
             <dt className="text-muted">Taxable value</dt><dd className="text-right">{inr(t.subtotal)}</dd>
             {t.tax_type === "INTER" ? (
               <><dt className="text-muted">IGST {pct(bill.gst_percent)}</dt><dd className="text-right">{inr(t.igst_amount)}</dd></>

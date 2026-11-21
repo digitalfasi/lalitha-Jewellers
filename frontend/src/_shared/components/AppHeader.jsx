@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
 import { Calculator as CalcIcon, Home, Images, Link2, Package, Receipt, ScanLine, Settings, Tag } from "lucide-react";
@@ -11,22 +11,23 @@ import GoldRateBadge from "./GoldRateBadge";
 import HealthBadge from "./HealthBadge";
 import ScanBox from "./ScanBox";
 import Calculator from "@/modules/calc/Calculator";
+import { FEATURES } from "@/_shared/features";
 
 // On phones the menu moves to a bar at the bottom (thumb reach), with the five
 // most used screens; everything else is one tap away on Home.
-const PHONE_BAR = ["/", "/inventory", "/billing", "/tags", "/audit"];
+const PHONE_BAR = ["/", "/inventory", "/billing", "/tags", FEATURES.stockCount ? "/audit" : "/combos"];
 
 // Staff see the everyday screens; Settings (rate, business, staff) is for managers and the owner.
 const LINKS = [
   { href: "/", label: "Home", icon: Home },
   { href: "/inventory", label: "Stock", icon: Package },
-  { href: "/combos", label: "Sets", icon: Link2 },
+  { href: "/combos", label: "Combos", icon: Link2 },
   { href: "/billing", label: "Billing", icon: Receipt },
   { href: "/tags", label: "Tags", icon: Tag },
-  { href: "/audit", label: "Stock count", icon: ScanLine },
+  FEATURES.stockCount && { href: "/audit", label: "Stock count", icon: ScanLine },
   { href: "/catalogue", label: "Catalogue", icon: Images },
   { href: "/settings", label: "Settings", icon: Settings, managers: true },
-];
+].filter(Boolean);
 
 export default function AppHeader() {
   const path = usePathname();
@@ -34,6 +35,17 @@ export default function AppHeader() {
   const { t } = useT();
   const links = LINKS.filter((l) => !l.managers || isManager(user));
   const [calc, setCalc] = useState(false);
+  // F2 opens the calculator from any screen.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        setCalc(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   return (
     <header className="no-print border-b border-line bg-surface">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-2.5">
@@ -55,7 +67,7 @@ export default function AppHeader() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ScanBox />
-          <button onClick={() => setCalc(true)} title={t("Calculator")}
+          <button onClick={() => setCalc(true)} title={`${t("Calculator")} (F2)`}
             className="flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-sm hover:bg-canvas">
             <CalcIcon size={16} aria-hidden /> <span className="hidden md:inline">{t("Calculator")}</span>
           </button>

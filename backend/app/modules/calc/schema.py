@@ -17,7 +17,17 @@ class FineIn(BaseModel):
     purity: Optional[Purity] = None
     wastage_percent: Optional[Decimal] = Field(None, ge=0, le=100)
     making_per_gram: Optional[Decimal] = Field(None, ge=0, le=1_000_000)
-    other_charges: Decimal = Field(0, ge=0, le=100_000_000, description="Rupees: stones, hallmarking...")
+    other_charges: Decimal = Field(0, ge=0, le=100_000_000, description="Rupees, anything else")
+    # Stones: rate x quantity, by carat, by piece or by gram.
+    stone_rate: Optional[Decimal] = Field(None, ge=0, le=10_000_000)
+    stone_qty: Optional[Decimal] = Field(None, ge=0, le=100_000)
+    stone_unit: Literal["CARAT", "PIECE", "GRAM"] = "CARAT"
+    # Hallmarking (HUID), per piece.
+    hallmark_pieces: int = Field(0, ge=0, le=10_000)
+    hallmark_rate: Decimal = Field(0, ge=0, le=100_000)
+    # Discount: as touch taken off, and / or rupees off.
+    touch_discount: Decimal = Field(0, ge=0, le=50)
+    discount_amount: Decimal = Field(0, ge=0, le=100_000_000)
     gold_rate: Decimal = Rate
     gst_percent: Decimal = Field(3, ge=0, le=28)
     interstate: bool = False
@@ -32,6 +42,10 @@ class FineIn(BaseModel):
             raise ValueError("Choose the purity and enter the wastage %")
         return self
 
+    @property
+    def stone_amount(self) -> Decimal:
+        return (self.stone_rate or 0) * (self.stone_qty or 0)
+
 
 class FineOut(BaseModel):
     net_weight: Decimal
@@ -41,6 +55,9 @@ class FineOut(BaseModel):
     fine_pavan: Decimal
     metal_amount: Decimal
     making_amount: Decimal
+    stone_amount: Decimal
+    hallmark_amount: Decimal
+    discount_amount: Decimal
     other_charges: Decimal
     subtotal: Decimal
     gst_amount: Decimal

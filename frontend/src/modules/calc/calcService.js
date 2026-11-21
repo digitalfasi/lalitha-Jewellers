@@ -9,7 +9,6 @@ export const calcService = {
   oldGold: (body) => api("/calc/old-gold", { method: "POST", body }),
   moneyToGold: (body) => api("/calc/money-to-gold", { method: "POST", body }),
   metalAccount: (body) => api("/calc/metal-account", { method: "POST", body }),
-  quote: (body) => api("/billing/quote", { method: "POST", body }),
 };
 
 /** A number from a text box, or null when empty / not a number. */
@@ -42,8 +41,59 @@ export function useLive(run, deps) {
   return state;
 }
 
+// Values typed in the calculator survive closing the panel (for this browser tab only).
+const PERSIST = "calc.v1.";
+export function usePersist(key, initial) {
+  const [value, setValue] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(PERSIST + key);
+      return saved ? { ...initial, ...JSON.parse(saved) } : initial;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(PERSIST + key, JSON.stringify(value));
+    } catch {}
+  }, [key, value]);
+  return [value, setValue];
+}
+export function clearPersist(key) {
+  try {
+    sessionStorage.removeItem(PERSIST + key);
+  } catch {}
+}
+
+// The last 10 kept answers, on this device.
+const HISTORY = "calc.history";
+export const history = {
+  list() {
+    try {
+      return JSON.parse(localStorage.getItem(HISTORY)) || [];
+    } catch {
+      return [];
+    }
+  },
+  add(item) {
+    const next = [{ ...item, at: new Date().toISOString() }, ...history.list()].slice(0, 10);
+    try {
+      localStorage.setItem(HISTORY, JSON.stringify(next));
+    } catch {}
+    return next;
+  },
+  clear() {
+    try {
+      localStorage.removeItem(HISTORY);
+    } catch {}
+  },
+};
+
 const inrFmt = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const rs = (v) =>
   v === null || v === undefined ? "—" : `${Number(v) < 0 ? "−" : ""}₹${inrFmt.format(Math.abs(Number(v)))}`;
 export const g3 = (v) => (v === null || v === undefined ? "—" : `${Number(v).toFixed(3)} g`);
 export const pv = (v) => (v === null || v === undefined ? "" : `${Number(v).toFixed(3)} pavan`);
+export const w3 = (v) => Number(v).toFixed(3);
+export const pc = (v) => `${Number(v)}%`;
+export const GRAMS_PER_PAVAN = 8;

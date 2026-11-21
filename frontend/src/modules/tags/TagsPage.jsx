@@ -138,7 +138,7 @@ export default function TagsPage() {
               <h2 className="font-semibold text-amber-900">Tags to print: {pending.length}</h2>
               <p className="text-sm text-amber-900/80">
                 {pending.filter((p) => p.state === "NEW").length} new pieces ·{" "}
-                {pending.filter((p) => p.state === "COMBO_CHANGED").length} whose set changed since their tag was printed
+                {pending.filter((p) => p.state === "COMBO_CHANGED").length} whose combo changed since their tag was printed
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -146,16 +146,41 @@ export default function TagsPage() {
               <Button variant="ghost" onClick={markAllPendingDone} title="For stock that already has correct tags on it">Mark all as already tagged</Button>
             </div>
           </div>
-          <details className="mt-2 text-sm">
-            <summary className="cursor-pointer text-amber-900">Show the list</summary>
-            <ul className="mt-2 max-h-56 divide-y divide-amber-200 overflow-y-auto">
-              {pending.map((p) => (
-                <li key={p.code} className="flex items-center justify-between gap-3 py-1.5">
-                  <span><b className="font-mono">{p.code}</b> {p.name} <span className="text-xs text-amber-900/70">· {p.note}</span></span>
-                  <Button variant="link" onClick={() => addCodes([p.code])}>Add</Button>
-                </li>
+          <details className="mt-2 text-sm" open={pending.length <= 12}>
+            <summary className="cursor-pointer text-amber-900">Show the list (in shelf order)</summary>
+            <div className="mt-2 max-h-80 overflow-y-auto">
+              {/* Grouped by category and sub-category, so staff walk the shelves once. */}
+              {Object.entries(pending.reduce((g, p) => {
+                const k = p.design_name ? `${p.category_name} · ${p.design_name}` : p.category_name;
+                (g[k] ||= []).push(p);
+                return g;
+              }, {})).map(([shelf, items]) => (
+                <div key={shelf} className="mb-2">
+                  <div className="flex items-center justify-between border-b border-amber-300 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                    <span>{shelf} · {items.length}</span>
+                    <Button variant="link" onClick={() => addCodes(items.map((p) => p.code))}>Add these</Button>
+                  </div>
+                  <ul className="divide-y divide-amber-200">
+                    {items.map((p) => (
+                      <li key={p.code} className="flex items-start justify-between gap-3 py-1.5">
+                        <span>
+                          <b className="font-mono">{p.code}</b> {p.name}
+                          {p.state === "NEW" ? (
+                            <span className="ml-2 rounded-full bg-amber-200 px-1.5 text-xs text-amber-900">new</span>
+                          ) : (
+                            <span className="mt-0.5 block text-xs text-amber-900/80">
+                              Old tag back: <s>{p.back_was || "no combo"}</s> → new: <b>{p.back_now || "no combo"}</b>
+                              {!p.back_now && " · take the old tag off"}
+                            </span>
+                          )}
+                        </span>
+                        <Button variant="link" onClick={() => addCodes([p.code])}>Add</Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
+            </div>
           </details>
         </Card>
       )}
@@ -187,7 +212,7 @@ export default function TagsPage() {
             </form>
             <p className="mt-1.5 text-xs text-muted">Scan or type one or more codes. Only in-stock pieces and active combos print.</p>
 
-            <Field label="Tag style" className="mt-4" hint={style === "fold" ? "A set's code prints on the back of each piece's tag. Fold on the dashed line." : undefined}>
+            <Field label="Tag style" className="mt-4" hint={style === "fold" ? "A combo's code prints on the back of each piece's tag. Fold on the dashed line." : undefined}>
               <Select value={style} onChange={(e) => setPref("style", e.target.value)}>
                 {Object.entries(TAG_STYLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>

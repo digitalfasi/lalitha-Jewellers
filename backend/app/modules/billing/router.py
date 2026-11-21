@@ -8,6 +8,12 @@ from app._shared.core.database import get_async_db
 from app.modules.auth.deps import require_role
 from app.modules.auth.model import MANAGERS
 from app.modules.billing.schema import (
+    EstimateIn,
+    EstimateOut,
+    GoldAccountOut,
+    GoldEntryIn,
+    LenientQuoteIn,
+    LenientQuoteOut,
     BillDraft,
     BillList,
     BillOut,
@@ -22,6 +28,7 @@ from app.modules.billing.schema import (
 )
 from app.modules.billing.mailer import send_bill
 from app.modules.billing.pdf import bill_pdf
+from app.modules.billing.extras import EstimateService, GoldAccountService, lenient_quote
 from app.modules.billing.service import BillService, ShopService
 from app.modules.business.service import BusinessService
 
@@ -121,3 +128,44 @@ async def bill_email(bill_id: str, data: EmailBillIn, db: AsyncSession = Depends
 async def piece_bills(piece_code: str, db: AsyncSession = Depends(get_async_db)):
     """Bills a piece has been on, for its history screen."""
     return await BillService.bills_for_piece(db, piece_code)
+
+
+# ----------------------------------------------- counter quote, estimates, gold
+
+@router.post("/quick-quote", response_model=LenientQuoteOut)
+async def quick_quote(data: LenientQuoteIn, db: AsyncSession = Depends(get_async_db)):
+    """The calculator's quote: prices what it can and lists the rest as problems."""
+    return await lenient_quote(db, data)
+
+
+@router.post("/estimates", response_model=EstimateOut, status_code=status.HTTP_201_CREATED)
+async def create_estimate(data: EstimateIn, db: AsyncSession = Depends(get_async_db)):
+    return await EstimateService.create(db, data)
+
+
+@router.get("/estimates", response_model=List[EstimateOut])
+async def list_estimates(status_: Optional[str] = Query(None, alias="status", pattern="^(OPEN|BILLED)$"),
+                         limit: int = Query(50, ge=1, le=200), db: AsyncSession = Depends(get_async_db)):
+    return await EstimateService.list(db, status_, limit)
+
+
+@router.get("/estimates/{estimate_id}", response_model=EstimateOut)
+async def get_estimate(estimate_id: str, db: AsyncSession = Depends(get_async_db)):
+    return await EstimateService.get(db, estimate_id)
+
+
+@router.get("/shops/{shop_id}/gold", response_model=GoldAccountOut)
+async def gold_account(shop_id: str, db: AsyncSession = Depends(get_async_db)):
+    return await GoldAccountService.account(db, shop_id)
+
+
+@router.post("/shops/{shop_id}/gold", response_model=GoldAccountOut, dependencies=[Depends(require_role(*MANAGERS))])
+async def add_gold_entry(shop_id: str, data: GoldEntryIn, db: AsyncSession = Depends(get_async_db)):
+    """Record gold or cash the shop gave, or an opening balance / correction. Managers and the owner."""
+    return await GoldAccountService.add(db, shop_id, data)
+
+
+@router.delete("/shops/{shop_id}/gold/{entry_id}", response_model=GoldAccountOut,
+               dependencies=[Depends(require_role(*MANAGERS))])
+async def remove_gold_entry(shop_id: str, entry_id: str, db: AsyncSession = Depends(get_async_db)):
+    return await GoldAccountService.remove(db, shop_id, entry_id)

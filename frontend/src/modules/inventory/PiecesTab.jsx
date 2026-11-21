@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import CameraScan from "@/_shared/components/CameraScan";
 import { Camera, History, Pencil, Plus, Printer, RotateCcw, Tag, Trash2 } from "lucide-react";
 import { mediaUrl } from "@/_shared/api/client";
 import { isManager, useAuth } from "@/_shared/auth/AuthProvider";
@@ -17,23 +18,28 @@ import { grams, inventoryService } from "./inventoryService";
 import PieceForm from "./PieceForm";
 import PieceHistory from "./PieceHistory";
 
-const TAG_NOTE = { NEW: "Tag not printed", COMBO_CHANGED: "Reprint tag: set changed" };
+const TAG_NOTE = { NEW: "Tag not printed", COMBO_CHANGED: "Reprint tag: combo changed" };
 const shortName = (p) => (p.design_name ? `${p.design_name} ${p.category_name.toLowerCase()}` : p.name);
 const PAGE = 50;
 
 // One grid for the header and every row, so columns line up. On a laptop it
 // fits without sideways scrolling; below "lg" a row becomes two lines.
-const ROW = "grid items-center gap-x-3 px-3 grid-cols-[24px_48px_minmax(0,1fr)_auto] lg:grid-cols-[24px_48px_minmax(0,2.2fr)_64px_minmax(0,1.3fr)_minmax(0,1.4fr)_auto]";
+// The columns follow the trade's own slip: gross - less = net, net x % = fine.
+const ROW = "grid items-center gap-x-3 px-3 grid-cols-[24px_48px_minmax(0,1fr)_auto] lg:grid-cols-[24px_48px_minmax(0,2fr)_48px_repeat(5,minmax(0,0.75fr))_minmax(0,1.2fr)_auto]";
+const fineOf = (p) => (p.touch_percent != null ? (Number(p.net_weight) * Number(p.touch_percent)) / 100 : null);
+const sumOf = (items, f) => items.reduce((a, p) => a + (Number(f(p)) || 0), 0);
 
 export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
   const { t } = useT();
   const { user } = useAuth();
   const params = useSearchParams();
+  const router = useRouter();
   const pickMode = params.get("pick") === "1";
   const pieceParam = params.get("piece");
   const { printTags, printer } = useTagPrinter();
 
-  const [filters, setFilters] = useState({ q: "", category_id: "", status: "IN_STOCK" });
+  const [filters, setFilters] = useState({ q: "", category_id: "", design_id: "", status: "IN_STOCK" });
+  const [subs, setSubs] = useState([]); // sub-categories of the chosen category
   const [query, setQuery] = useState(""); // debounced copy of filters.q
   const [page, setPage] = useState(0);
   const [data, setData] = useState({ items: [], total: 0 });
@@ -41,7 +47,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
   const [notice, setNotice] = useState(null);
   const [history, setHistory] = useState(null);
   const [form, setForm] = useState(null); // null = closed, {} = add, {piece} = edit
-  const [picked, setPicked] = useState({}); // item_code -> piece, for "Make a set"
+  const [picked, setPicked] = useState({}); // item_code -> piece, for "Make a combo"
   const [setName, setSetName] = useState("");
   const [making, setMaking] = useState(false);
   const photoInput = useRef(null);
@@ -60,11 +66,16 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
   const load = useCallback(() => {
     setLoading(true);
     inventoryService
-      .listPieces({ q: query, category_id: filters.category_id, status: filters.status, lot_id: lot?.id, limit: PAGE, offset: page * PAGE })
+      .listPieces({ q: query, category_id: filters.category_id, design_id: filters.design_id, status: filters.status, lot_id: lot?.id, limit: PAGE, offset: page * PAGE })
       .then(setData)
       .catch((e) => setNotice({ tone: "error", text: e.message }))
       .finally(() => setLoading(false));
-  }, [query, filters.category_id, filters.status, lot?.id, page]);
+  }, [query, filters.category_id, filters.design_id, filters.status, lot?.id, page]);
+
+  useEffect(() => {
+    if (!filters.category_id) return setSubs([]);
+    inventoryService.listDesigns(filters.category_id).then((l) => setSubs(l.filter((d) => d.is_active))).catch(() => setSubs([]));
+  }, [filters.category_id]);
   useEffect(load, [load]);
   // Marking tags as printed (from the print bar) refreshes the badges.
   useEffect(() => {
@@ -73,8 +84,24 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
   }, [load]);
 
   const setFilter = (k) => (e) => {
-    setFilters((f) => ({ ...f, [k]: e.target.value }));
+    // A new category clears the sub-category, which belongs to the old one.
+    setFilters((f) => ({ ...f, [k]: e.target.value, ...(k === "category_id" ? { design_id: "" } : {}) }));
     setPage(0);
+  };
+
+  // A scanned tag opens that piece (or its combo). A USB scanner types into the search box and presses Enter.
+  const openCode = async (raw) => {
+    const code = raw.trim().toUpperCase();
+    if (!code) return;
+    if (code.startsWith("CB")) return router.push(`/combos?code=${code}`);
+    try {
+      const p = await inventoryService.getPieceByCode(code);
+      setFilters({ q: code, category_id: "", design_id: "", status: "" }); // show it, whatever was filtered
+      setPage(0);
+      setHistory(p);
+    } catch (err) {
+      setNotice({ tone: "error", text: err.message });
+    }
   };
 
   const onSaved = (p, wasEdit, printAfter) => {
@@ -87,7 +114,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
 
   const onSetSaved = (combo, printAfter) => {
     const codes = combo.pieces.map((x) => x.item_code);
-    setNotice({ tone: "ok", text: t("Set {set} saved: {codes}.", { set: combo.combo_code, codes: codes.join(" + ") }) });
+    setNotice({ tone: "ok", text: t("Combo {set} saved: {codes}.", { set: combo.combo_code, codes: codes.join(" + ") }) });
     load();
     onChanged();
     if (printAfter) printTags([combo.combo_code, ...codes]);
@@ -109,7 +136,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
       });
       setPicked({});
       setSetName("");
-      setNotice({ tone: "ok", text: t("Set {set} made from {codes}. Print the new tags so the set shows on their backs.", { set: combo.combo_code, codes: combo.pieces.map((x) => x.item_code).join(" + ") }) });
+      setNotice({ tone: "ok", text: t("Combo {set} made from {codes}. Print the new tags so the combo shows on their backs.", { set: combo.combo_code, codes: combo.pieces.map((x) => x.item_code).join(" + ") }) });
       load();
       printTags([combo.combo_code, ...combo.pieces.map((x) => x.item_code)]);
     } catch (err) {
@@ -153,10 +180,17 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
     <div className="flex flex-col gap-3">
       {/* Filters + the main action, kept at the top while the list scrolls. */}
       <div className="sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 bg-canvas px-1 py-2">
-        <Input value={filters.q} onChange={setFilter("q")} placeholder={t("Search code, name or HUID")} className="h-10 min-w-48 flex-1 sm:max-w-xs" aria-label={t("Search")} />
+        <Input value={filters.q} onChange={setFilter("q")} onKeyDown={(e) => e.key === "Enter" && /^[A-Za-z]{2,3}\d{3,}$/.test(filters.q.trim()) && openCode(filters.q)}
+          placeholder={t("Search or scan code, name or HUID")} className="h-10 min-w-48 flex-1 sm:max-w-xs" aria-label={t("Search")} />
+        <CameraScan onCode={openCode} className="h-10" label={t("Scan")} />
         <Select value={filters.category_id} onChange={setFilter("category_id")} className="h-10 w-40" aria-label={t("Category")}>
           <option value="">{t("All categories")}</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+        <Select value={filters.design_id} onChange={setFilter("design_id")} className="h-10 w-40" aria-label={t("Sub-category")}
+          disabled={!filters.category_id} title={!filters.category_id ? t("Choose a category first") : undefined}>
+          <option value="">{t("All sub-categories")}</option>
+          {subs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </Select>
         <Select value={filters.status} onChange={setFilter("status")} className="h-10 w-36" aria-label={t("Status")}>
           <option value="IN_STOCK">{t("In stock")}</option>
@@ -183,10 +217,10 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
       {notice && <Notice tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Notice>}
       {pickMode ? (
         <div className="rounded-xl border border-accent bg-accent-soft px-4 py-3 text-sm">
-          {t("To make a set: tick the box next to each piece (for example a chain and a pendant), then press Make a set.")}
+          {t("To make a combo: tick the box next to each piece (for example a chain and a pendant), then press Make a combo.")}
         </div>
       ) : (
-        <Tip id="pieces">{t("Tick the box next to pieces to make a set or print their tags. A yellow badge means the tag still needs printing.")}</Tip>
+        <Tip id="pieces">{t("Tick the box next to pieces to make a combo or print their tags. A yellow badge means the tag still needs printing.")}</Tip>
       )}
 
       {pickedList.length > 0 && (
@@ -195,11 +229,11 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
           <span className="font-mono">{pickedList.map((x) => x.item_code).join(" + ")}</span>
           {pickedList.length >= 2 && (
             <Input value={setName} onChange={(e) => setSetName(e.target.value)} placeholder={pickedList.map(shortName).join(" + ")}
-              className="h-9 w-64 bg-surface" aria-label={t("Set name")} />
+              className="h-9 w-64 bg-surface" aria-label={t("Combo name")} />
           )}
           <span className="ml-auto flex gap-2">
             <Button onClick={makeSet} disabled={making || pickedList.length < 2} title={pickedList.length < 2 ? t("Pick at least 2 pieces") : undefined}>
-              {making ? t("Making…") : t("Make a set")}
+              {making ? t("Making…") : t("Make a combo")}
             </Button>
             <Button variant="ghost" onClick={() => printTags(pickedList.map((x) => x.item_code))}>{t("Print tags")}</Button>
             <Button variant="link" onClick={() => setPicked({})}>{t("Clear")}</Button>
@@ -213,7 +247,11 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
           <span />
           <span>{t("Piece")}</span>
           <span>{t("Purity")}</span>
-          <span className="text-right">{t("Weight (g)")}</span>
+          <span className="text-right">{t("Gross")}</span>
+          <span className="text-right">{t("Less")}</span>
+          <span className="text-right">{t("Net")}</span>
+          <span className="text-right">%</span>
+          <span className="text-right">{t("Fine")}</span>
           <span>{t("Status")}</span>
           <span className="w-[84px]" />
         </div>
@@ -237,25 +275,20 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
                   </button>
                 )}
                 {p.combo_code && (
-                  <Link href={`/combos?code=${p.combo_code}`} title={t("In set {set}", { set: p.combo_code })}
+                  <Link href={`/combos?code=${p.combo_code}`} title={t("In combo {set}", { set: p.combo_code })}
                     className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-xs text-accent hover:underline">
                     {p.combo_code}
                   </Link>
                 )}
               </div>
             );
-            const weights = (
-              <div className="text-right tabular-nums leading-tight">
-                <div className="font-semibold">{grams(p.net_weight)}</div>
-                <div className="text-xs text-muted">G {grams(p.gross_weight)}{p.stone_weight > 0 ? ` · S ${grams(p.stone_weight)}` : ""}</div>
-              </div>
-            );
+            const fine = fineOf(p);
             return (
               <li key={p.id} className={`${ROW} py-2 ${picked[p.item_code] ? "bg-accent-soft/40" : "hover:bg-canvas/60"}`}>
                 <span>
                   {p.status === "IN_STOCK" && (
                     <input type="checkbox" checked={!!picked[p.item_code]} onChange={() => togglePick(p)} disabled={!canPick}
-                      className="h-5 w-5" title={p.combo_code ? t("Already in {set}", { set: p.combo_code }) : t("Pick for a set or tag printing")}
+                      className="h-5 w-5" title={p.combo_code ? t("Already in combo {set}", { set: p.combo_code }) : t("Pick for a combo or tag printing")}
                       aria-label={t("Pick {code}", { code: p.item_code })} />
                   )}
                 </span>
@@ -273,15 +306,19 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
                   </div>
                   {/* Below "lg": weights and status on a second line, inside the row. */}
                   <div className="mt-1 flex flex-wrap items-center gap-3 lg:hidden">
-                    <span className="text-sm tabular-nums"><b>{grams(p.net_weight)} g</b> <span className="text-xs text-muted">G {grams(p.gross_weight)}</span></span>
+                    <span className="text-sm tabular-nums">
+                      <b>{grams(p.net_weight)} g</b>
+                      <span className="text-xs text-muted"> · {t("Gross")} {grams(p.gross_weight)}{p.stone_weight > 0 ? ` · ${t("Less")} ${grams(p.stone_weight)}` : ""}{p.touch_percent != null ? ` · ${p.touch_percent}% · ${t("Fine")} ${grams(fine)}` : ""}</span>
+                    </span>
                     {chips}
                   </div>
                 </div>
-                <div className="hidden lg:block">
-                  <PurityBadge purity={p.purity} />
-                  {p.touch_percent != null && <div className="mt-0.5 text-xs text-muted">{p.touch_percent}%</div>}
-                </div>
-                <div className="hidden lg:block">{weights}</div>
+                <div className="hidden lg:block"><PurityBadge purity={p.purity} /></div>
+                <div className="hidden text-right tabular-nums lg:block">{grams(p.gross_weight)}</div>
+                <div className="hidden text-right tabular-nums text-muted lg:block">{p.stone_weight > 0 ? grams(p.stone_weight) : "—"}</div>
+                <div className="hidden text-right font-semibold tabular-nums lg:block">{grams(p.net_weight)}</div>
+                <div className="hidden text-right tabular-nums lg:block">{p.touch_percent ?? <span className="text-red-600" title={t("No % yet")}>—</span>}</div>
+                <div className="hidden text-right font-semibold tabular-nums lg:block">{fine != null ? grams(fine) : "—"}</div>
                 <div className="hidden lg:block">{chips}</div>
                 <div className="flex items-center gap-1">
                   {p.status === "IN_STOCK" && (
@@ -303,6 +340,21 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
             );
           })}
         </ul>
+        {data.items.length > 1 && (
+          <div className={`${ROW} hidden border-t-2 border-ink/70 bg-canvas py-2 text-sm font-semibold tabular-nums lg:grid`}>
+            <span />
+            <span />
+            <span>{pages > 1 ? t("Total (this page)") : t("Total")} · {data.items.length}</span>
+            <span />
+            <span className="text-right">{grams(sumOf(data.items, (p) => p.gross_weight))}</span>
+            <span className="text-right">{grams(sumOf(data.items, (p) => p.stone_weight))}</span>
+            <span className="text-right">{grams(sumOf(data.items, (p) => p.net_weight))}</span>
+            <span />
+            <span className="text-right">{grams(sumOf(data.items, fineOf))}</span>
+            <span />
+            <span className="w-[84px]" />
+          </div>
+        )}
       </Card>
 
       <div className="flex items-center justify-between text-sm text-muted">

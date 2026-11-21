@@ -13,12 +13,14 @@ import { Button, Card, Field, Input, Notice, PurityBadge } from "@/_shared/compo
 import { useT } from "@/_shared/i18n/LanguageProvider";
 import { grams } from "@/modules/inventory/inventoryService";
 import { tagService } from "@/modules/tags/tagService";
+import { FEATURES } from "@/_shared/features";
 import { billingService, inr, num2, pct, today } from "./billingService";
+import { dealText } from "./ShopsTab";
 
 const STEPS = ["Shop", "Scan items", "Check and save"];
 
 // A new bill in three steps, one job per screen:
-//   1 choose the shop  ->  2 scan pieces or sets  ->  3 check the total and save.
+//   1 choose the shop  ->  2 scan pieces or combos, set the rate and %  ->  3 charges, check and save.
 // The server prices the bill live (quote) as lines change; saving marks everything sold.
 export default function NewBill() {
   const router = useRouter();
@@ -31,8 +33,13 @@ export default function NewBill() {
   const [goldRate, setGoldRate] = useState(""); // blank = the day's rate from Settings
   const [dayRate, setDayRate] = useState(undefined); // undefined = loading, null = not set
   const [gst, setGst] = useState("3");
+  const [biz, setBiz] = useState(null); // the owner's bill settings: stone and HUID rates, making on/off
+  const [stoneRate, setStoneRate] = useState(""); // blank = from Settings
+  const [huidRate, setHuidRate] = useState("");
+  const [allPct, setAllPct] = useState("");
   // How this shop is priced: by touch %, or by purity + wastage % with making per gram.
   const [priceBy, setPriceBy] = useState("TOUCH");
+  const [estimateId, setEstimateId] = useState(null); // the estimate this bill comes from
   const [remarks, setRemarks] = useState("");
   // [{code, kind: "PIECE"|"COMBO", comboCode, pieceCodes, charges, touch, photo, title, purity}]
   const [lines, setLines] = useState([]);
@@ -47,7 +54,30 @@ export default function NewBill() {
 
   useEffect(() => {
     billingService.listShops().then(setShops).catch((e) => setNotice({ tone: "error", text: e.message }));
+    api("/business").then(setBiz).catch(() => {});
   }, []);
+
+  // "Make bill" from an estimate: the same shop, lines and (if still valid) rate.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("estimate");
+    if (!id) return;
+    billingService.getEstimate(id).then((e) => {
+      if (e.status === "BILLED") return setNotice({ tone: "error", text: t("{n} is already billed.", { n: e.estimate_number }) });
+      const str = (v) => (v === undefined || v === null ? "" : String(v));
+      setEstimateId(e.id);
+      if (e.shop_id) setShopId(e.shop_id);
+      setGst(String(e.gst_percent));
+      setGoldRate(e.is_valid ? String(e.gold_rate) : "");
+      if (e.lines.some((l) => l.wastage_percent !== undefined)) setPriceBy("WASTAGE");
+      setLines(e.lines.map((l) => ({
+        code: l.code, kind: l.code.startsWith("CB") ? "COMBO" : "PIECE", charges: str(l.charges || ""),
+        touch: str(l.touch_percent), wastage: str(l.wastage_percent), making: str(l.making_per_gram),
+      })));
+      setStep(e.shop_id ? 1 : 0);
+      setNotice({ tone: "ok", text: e.is_valid ? t("Loaded {n}.", { n: e.estimate_number })
+        : t("Loaded {n}. Its rate has expired, so today's rate is used.", { n: e.estimate_number }) });
+    }).catch((err) => setNotice({ tone: "error", text: err.message }));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!billDate) return setDayRate(null);
@@ -59,26 +89,39 @@ export default function NewBill() {
     if (step === 1) scanRef.current?.focus();
   }, [step]);
 
+  const shopDeal = FEATURES.shopDeals ? shops.find((s) => s.id === shopId) : null;
+  const showMaking = FEATURES.shopDeals || !!biz?.show_making;
+  // The shop's usual deal: switch the pricing way when a shop with a deal is chosen.
+  useEffect(() => {
+    if (shopDeal?.price_mode && !estimateId) setPriceBy(shopDeal.price_mode);
+  }, [shopId, shops.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const draft = useMemo(
     () => ({
       shop_id: shopId || null,
       bill_date: billDate || null,
       gold_rate: goldRate === "" ? null : parseFloat(goldRate),
       gst_percent: gst === "" ? 0 : parseFloat(gst),
+      stone_rate: stoneRate === "" ? null : parseFloat(stoneRate) || 0,
+      huid_rate: huidRate === "" ? null : parseFloat(huidRate) || 0,
       remarks: remarks || null,
       lines: lines.map((l) => {
+        // Blank boxes take the shop's usual deal.
         const charges = l.charges === "" ? 0 : parseFloat(l.charges) || 0;
+        const pick = (typed, deal) => ((typed ?? "") === "" ? deal ?? null : parseFloat(typed));
         if (priceBy === "WASTAGE") {
           return {
             code: l.code, charges,
-            wastage_percent: (l.wastage ?? "") === "" ? 0 : parseFloat(l.wastage) || 0,
-            making_per_gram: (l.making ?? "") === "" ? null : parseFloat(l.making) || null,
+            wastage_percent: pick(l.wastage, shopDeal?.deal_wastage) ?? 0,
+            making_per_gram: pick(l.making, shopDeal?.deal_making) || null,
           };
         }
-        return { code: l.code, charges, touch_percent: l.touch === "" ? null : parseFloat(l.touch) || null };
+        const making = pick(l.making, shopDeal?.deal_making);
+        return { code: l.code, charges, touch_percent: pick(l.touch, shopDeal?.deal_touch) || null,
+          ...(making ? { making_per_gram: making } : {}) };
       }),
+      estimate_id: estimateId,
     }),
-    [shopId, billDate, goldRate, gst, remarks, lines, priceBy],
+    [shopId, billDate, goldRate, gst, stoneRate, huidRate, remarks, lines, priceBy, shopDeal, estimateId],
   );
   const rateOk = goldRate === "" ? !!dayRate : draft.gold_rate > 0;
   const shop = shops.find((s) => s.id === shopId);
@@ -128,12 +171,12 @@ export default function NewBill() {
       if (!item.printable) return fail(t("{code} is {status}, so it cannot be billed.", { code, status: t(item.status === "SOLD" ? "sold" : "not in stock") }));
       // A piece in a set goes on as its set (it can be split afterwards).
       if (item.kind === "PIECE" && item.combo_code) {
-        if (onBill(item.combo_code)) return fail(t("{code} is in {set}, which is already on this bill.", { code, set: item.combo_code }));
+        if (onBill(item.combo_code)) return fail(t("{code} is in combo {set}, which is already on this bill.", { code, set: item.combo_code }));
         const combo = await tagService.resolve(item.combo_code);
         setLines((ls) => [...ls, comboLine(combo)]);
         setLast(combo);
         beep(true);
-        return setNotice({ tone: "ok", text: t("{code} is part of {set}, so the whole set was added. Press Split to bill its pieces separately.", { code, set: item.combo_code }) });
+        return setNotice({ tone: "ok", text: t("{code} is part of {set}, so the whole combo was added. Press Split to bill its pieces separately.", { code, set: item.combo_code }) });
       }
       setLines((ls) => [...ls, item.kind === "COMBO" ? comboLine(item)
         : { code: item.code, kind: "PIECE", charges: "", touch: "", photo: item.photo_url, title: item.title, purity: item.purity }]);
@@ -147,6 +190,11 @@ export default function NewBill() {
   };
 
   const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  // One % for every line, e.g. a dealer who gets 102 on everything. Each line can still be changed after.
+  const applyAll = () => {
+    if (allPct === "") return;
+    setLines((ls) => ls.map((l) => ({ ...l, touch: allPct })));
+  };
   const removeLine = (i) => {
     const l = lines[i];
     const before = lines;
@@ -288,11 +336,11 @@ export default function NewBill() {
                   </Button>
                 </div>
               )}
-              {!rateOk && lines.length > 0 && <p className="mt-3 text-sm text-amber-700">{t("Set the day's gold rate (or type one in step 1) to price the bill.")}</p>}
+              {!rateOk && lines.length > 0 && <p className="mt-3 text-sm text-amber-700">{t("Set the day's gold rate in Settings, or type one on the next step.")}</p>}
               {quoteError && <div className="mt-3"><Notice tone="error">{quoteError}</Notice></div>}
             </Card>
-            <Tip id="newbill">{t("Scanning one piece of a set adds the whole set. Leave Touch empty to use each piece's own touch.")}</Tip>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Tip id="newbill">{t("Scanning one piece of a combo adds the whole combo. Leave % empty to use each piece's own %.")}</Tip>
+            {showMaking && <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted">{t("Price by")}</span>
               {[["TOUCH", "Touch %"], ["WASTAGE", "Purity + wastage"]].map(([k, label]) => (
                 <button key={k} type="button" onClick={() => setPriceBy(k)}
@@ -300,11 +348,12 @@ export default function NewBill() {
                   {t(label)}
                 </button>
               ))}
+              {dealText(shopDeal) && <span className="rounded-full bg-canvas px-2 py-0.5 text-xs">{t("Shop's deal")}: {dealText(shopDeal)}</span>}
               {priceBy === "WASTAGE" && <span className="text-xs text-muted">{t("Touch = purity + wastage (22K + 8 = 99.6). Making is ₹ per gram of net weight.")}</span>}
-            </div>
+            </div>}
 
             {lines.length === 0 ? (
-              <Card className="p-10 text-center text-muted">{t("Scan pieces or sets to start the bill.")}</Card>
+              <Card className="p-10 text-center text-muted">{t("Scan pieces or combos to start the bill.")}</Card>
             ) : (
               <ul className="flex flex-col gap-2">
                 {lines.map((l, i) => {
@@ -317,38 +366,38 @@ export default function NewBill() {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono font-semibold">{l.code}</span>
                           <PurityBadge purity={ql?.purity || l.purity} />
-                          {l.kind === "COMBO" && <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs text-accent">{t("Set")}</span>}
-                          {l.kind === "PIECE" && l.comboCode && <span className="text-xs text-muted">{t("of {set}", { set: l.comboCode })}</span>}
+                          {l.kind === "COMBO" && <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs text-accent">{t("Combo")}</span>}
+                          {l.kind === "PIECE" && l.comboCode && <span className="text-xs text-muted">{t("of combo {set}", { set: l.comboCode })}</span>}
                         </div>
                         <div className="truncate text-sm">{ql ? ql.description : l.title || (l.pieceCodes || []).join(" + ")}</div>
-                        {ql && <div className="text-xs tabular-nums text-muted">{t("Net")} {grams(ql.net_weight)} g · {t("Fine")} {grams(ql.fine_weight)} g</div>}
+                        {ql && <div className="text-xs tabular-nums text-muted">{t("Gross")} {grams(ql.gross_weight)}{ql.stone_weight > 0 ? ` · ${t("Less")} ${grams(ql.stone_weight)}` : ""} · {t("Net")} {grams(ql.net_weight)} · <b className="text-ink">{t("Fine")} {grams(ql.fine_weight)}</b></div>}
                       </div>
                       {priceBy === "TOUCH" ? (
                         <label className="flex flex-col text-xs text-muted">
-                          {t("Touch %")}
+                          %
                           <Input type="number" inputMode="decimal" min="0" max="200" step="0.01" value={l.touch} onChange={(e) => setLine(i, "touch", e.target.value)}
-                            placeholder={ql ? String(ql.touch_percent) : ""} className="h-9 w-20 text-right" aria-label={t("Touch for {code}", { code: l.code })} />
+                            placeholder={ql ? String(ql.touch_percent) : ""} className="h-9 w-20 text-right" aria-label={t("% for {code}", { code: l.code })} />
                         </label>
                       ) : (
                         <>
                           <label className="flex flex-col text-xs text-muted">
                             {t("Wastage %")}
                             <Input type="number" inputMode="decimal" min="0" max="100" step="0.01" value={l.wastage ?? ""} onChange={(e) => setLine(i, "wastage", e.target.value)}
-                              placeholder="0" className="h-9 w-20 text-right" aria-label={t("Wastage for {code}", { code: l.code })} />
+                              placeholder={String(shopDeal?.deal_wastage ?? 0)} className="h-9 w-20 text-right" aria-label={t("Wastage for {code}", { code: l.code })} />
                             {ql && <span className="text-[11px]">{t("touch")} {ql.touch_percent}</span>}
                           </label>
                           <label className="flex flex-col text-xs text-muted">
                             {t("Making ₹/g")}
                             <Input type="number" inputMode="decimal" min="0" step="0.01" value={l.making ?? ""} onChange={(e) => setLine(i, "making", e.target.value)}
-                              placeholder="0" className="h-9 w-20 text-right" aria-label={t("Making for {code}", { code: l.code })} />
+                              placeholder={String(shopDeal?.deal_making ?? 0)} className="h-9 w-20 text-right" aria-label={t("Making for {code}", { code: l.code })} />
                           </label>
                         </>
                       )}
-                      <label className="flex flex-col text-xs text-muted">
+                      {showMaking && <label className="flex flex-col text-xs text-muted">
                         {priceBy === "TOUCH" ? t("Charges ₹") : t("Other ₹")}
                         <Input type="number" inputMode="decimal" min="0" step="0.01" value={l.charges} onChange={(e) => setLine(i, "charges", e.target.value)}
                           placeholder="0" className="h-9 w-24 text-right" aria-label={t("Charges for {code}", { code: l.code })} />
-                      </label>
+                      </label>}
                       <div className="w-24 text-right font-semibold tabular-nums">{ql ? num2(ql.amount) : "…"}</div>
                       <div className="flex gap-2">
                         {l.kind === "COMBO" && <Button variant="ghost" className="h-9" onClick={() => split(i)}>{t("Split")}</Button>}
@@ -390,14 +439,86 @@ export default function NewBill() {
       {/* ---------------------------------------------------------------- 3. check */}
       {step === 2 && (
         <div className="grid items-start gap-5 lg:grid-cols-[1fr_380px]">
-          <Card className="flex flex-col gap-3 p-5">
+          <Card className="flex min-w-0 flex-col gap-3 p-5">
             <h2 className="text-lg font-semibold">{t("Check the bill")}</h2>
             <dl className="grid grid-cols-[120px_1fr] gap-y-1 text-sm">
               <dt className="text-muted">{t("Shop")}</dt><dd className="font-medium">{shop?.name}</dd>
               <dt className="text-muted">{t("Date")}</dt><dd>{billDate}</dd>
               <dt className="text-muted">{t("Gold rate")}</dt><dd>{quote ? `${inr(quote.gold_rate)} / g` : "—"}</dd>
-              <dt className="text-muted">{t("Lines")}</dt><dd>{lines.map((l) => l.code).join(", ")}</dd>
             </dl>
+            <div className="flex flex-wrap items-end gap-3 rounded-xl bg-canvas p-3">
+              <Field label={t("Gold rate (₹ / g fine)")} hint={goldRate === "" && dayRate ? t("Today's rate. Type to change it for this dealer.") : undefined}
+                error={goldRate === "" && dayRate === null ? t("No rate set for this date. Type one here.") : undefined}>
+                <Input type="number" inputMode="decimal" min="0" step="0.01" value={goldRate} onChange={(e) => setGoldRate(e.target.value)}
+                  placeholder={dayRate ? String(dayRate) : "15180"} className="h-10 w-40 bg-surface text-base" />
+              </Field>
+              {priceBy === "TOUCH" && (
+                <Field label={t("% for all lines")} hint={t("Fills every line; change any line after.")}>
+                  <div className="flex gap-1">
+                    <Input type="number" inputMode="decimal" min="0" max="200" step="0.01" value={allPct} onChange={(e) => setAllPct(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && applyAll()} placeholder="103" className="h-10 w-24 bg-surface text-base" />
+                    <Button variant="ghost" className="h-10" onClick={applyAll} disabled={allPct === "" || !lines.length}>{t("Apply")}</Button>
+                  </div>
+                </Field>
+              )}
+            </div>
+            {quote && (
+              <div className="overflow-x-auto rounded-lg border border-line">
+                <table className="w-full min-w-[620px] text-sm tabular-nums">
+                  <thead className="bg-canvas text-xs uppercase tracking-wide text-muted">
+                    <tr>
+                      <th className="px-2 py-2 text-left">{t("Product")}</th>
+                      <th className="px-2 text-left">{t("Purity")}</th>
+                      <th className="px-2 text-right">{t("Gross")}</th><th className="px-2 text-right">{t("Less")}</th>
+                      <th className="px-2 text-right">{t("Net")}</th><th className="px-2 text-right">%</th>
+                      <th className="px-2 text-right">{t("Fine")}</th><th className="px-2 text-right">{t("Stones ₹")}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {quote.lines.map((ql, i) => (
+                      <tr key={ql.line_no}>
+                        <td className="px-2 py-1.5"><span className="font-mono text-xs">{ql.code}</span> <span className="text-xs text-muted">{ql.description}</span></td>
+                        <td className="px-2 text-xs font-medium">{ql.purity}</td>
+                        <td className="px-2 text-right">{grams(ql.gross_weight)}</td>
+                        <td className="px-2 text-right">{ql.stone_weight > 0 ? grams(ql.stone_weight) : "—"}</td>
+                        <td className="px-2 text-right">{grams(ql.net_weight)}</td>
+                        <td className="px-1 text-right">
+                          {priceBy === "TOUCH" && lines[i] ? (
+                            <Input type="number" inputMode="decimal" min="0" max="200" step="0.01" value={lines[i].touch}
+                              onChange={(e) => setLine(i, "touch", e.target.value)} placeholder={String(ql.touch_percent)}
+                              className="ml-auto block h-8 w-20 text-right" aria-label={t("% for {code}", { code: ql.code })} />
+                          ) : ql.touch_percent}
+                        </td>
+                        <td className="px-2 text-right font-semibold">{grams(ql.fine_weight)}</td>
+                        <td className="px-2 text-right">{ql.stone_amount ? num2(ql.stone_amount) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t-2 border-ink/70 font-semibold">
+                    <tr>
+                      <td className="px-2 py-1.5">{t("{n} pieces", { n: tot.total_pieces })}</td>
+                      <td />
+                      <td className="px-2 text-right">{grams(tot.total_gross)}</td><td className="px-2 text-right">{grams(tot.total_stone)}</td>
+                      <td className="px-2 text-right">{grams(tot.total_net)}</td><td />
+                      <td className="px-2 text-right">{grams(tot.total_fine)}</td><td className="px-2 text-right">{num2(tot.stone_amount)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label={t("Stones ₹ / g of less")} hint={t("From Settings. Change for this bill.")}>
+                <Input type="number" inputMode="decimal" min="0" step="0.01" value={stoneRate} onChange={(e) => setStoneRate(e.target.value)}
+                  placeholder={biz?.stone_rate != null ? String(biz.stone_rate) : "0"} />
+              </Field>
+              <Field label={t("HUID ₹ / piece")} hint={tot ? t("{n} pieces have a HUID", { n: tot.huid_pieces }) : undefined}>
+                <Input type="number" inputMode="decimal" min="0" step="0.01" value={huidRate} onChange={(e) => setHuidRate(e.target.value)}
+                  placeholder={biz?.huid_rate != null ? String(biz.huid_rate) : "0"} />
+              </Field>
+              <Field label="GST %">
+                <Input type="number" inputMode="decimal" min="0" max="28" step="0.01" value={gst} onChange={(e) => setGst(e.target.value)} />
+              </Field>
+            </div>
             <Field label={t("Remarks")} hint={t("Optional, printed on the bill")}>
               <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} maxLength={1000} />
             </Field>
@@ -408,8 +529,10 @@ export default function NewBill() {
             <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1.5 text-sm tabular-nums">
               <dt className="text-muted">{t("Pieces")}</dt><dd className="text-right">{tot ? tot.total_pieces : "—"}</dd>
               <dt className="text-muted">{t("Fine weight")}</dt><dd className="text-right font-medium">{tot ? `${grams(tot.total_fine)} g` : "—"}</dd>
-              <dt className="text-muted">{t("Metal value")}</dt><dd className="text-right">{tot ? inr(tot.metal_amount) : "—"}</dd>
-              <dt className="text-muted">{t("Charges")}</dt><dd className="text-right">{tot ? inr(tot.total_charges) : "—"}</dd>
+              <dt className="text-muted">{t("Gold")} {tot ? `(${grams(tot.total_fine)} × ${num2(quote.gold_rate)})` : ""}</dt><dd className="text-right">{tot ? inr(tot.metal_amount) : "—"}</dd>
+              {tot?.stone_amount > 0 && <><dt className="text-muted">{t("Stones")} ({grams(tot.total_stone)} × {num2(tot.stone_rate)})</dt><dd className="text-right">{inr(tot.stone_amount)}</dd></>}
+              {tot?.huid_amount > 0 && <><dt className="text-muted">HUID ({tot.huid_pieces} × {num2(tot.huid_rate)})</dt><dd className="text-right">{inr(tot.huid_amount)}</dd></>}
+              {tot?.total_charges > 0 && <><dt className="text-muted">{t("Other charges")}</dt><dd className="text-right">{inr(tot.total_charges)}</dd></>}
               <dt className="text-muted">{t("Taxable value")}</dt><dd className="text-right">{tot ? inr(tot.subtotal) : "—"}</dd>
               {tot?.tax_type === "INTER" ? (
                 <><dt className="text-muted">IGST {pct(quote.gst_percent)}</dt><dd className="text-right">{inr(tot.igst_amount)}</dd></>
@@ -426,7 +549,7 @@ export default function NewBill() {
             <Button onClick={save} disabled={!canSave} className="mt-4 h-12 w-full text-base">
               {saving ? t("Saving…") : !rateOk ? t("Set the gold rate") : t("Save bill")}
             </Button>
-            <p className="mt-2 text-xs text-muted">{t("Saving marks every piece and set on this bill as sold.")}</p>
+            <p className="mt-2 text-xs text-muted">{t("Saving marks every piece and combo on this bill as sold.")}</p>
           </Card>
         </div>
       )}
