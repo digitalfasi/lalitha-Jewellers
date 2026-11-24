@@ -154,6 +154,20 @@ async def get_estimate(estimate_id: str, db: AsyncSession = Depends(get_async_db
     return await EstimateService.get(db, estimate_id)
 
 
+@router.get("/shops/{shop_id}/recent")
+async def shop_recent(shop_id: str, db: AsyncSession = Depends(get_async_db)):
+    """The shop's last 5 bills: date, rate and the % it was billed at, to quote the same deal again."""
+    from sqlalchemy import select
+    from app.modules.billing.model import BILL_STATUS_FINAL, Bill
+    rows = (await db.execute(
+        select(Bill).where(Bill.shop_id == shop_id, Bill.status == BILL_STATUS_FINAL)
+        .order_by(Bill.bill_date.desc(), Bill.bill_number.desc()).limit(5)
+    )).scalars().all()
+    return [{"bill_id": b.id, "bill_number": b.bill_number, "bill_date": b.bill_date, "gold_rate": float(b.gold_rate),
+             "percent": float(round(b.total_fine / b.total_net * 100, 2)) if b.total_net else None,
+             "total_fine": float(b.total_fine), "grand_total": float(b.grand_total)} for b in rows]
+
+
 @router.get("/shops/{shop_id}/gold", response_model=GoldAccountOut)
 async def gold_account(shop_id: str, db: AsyncSession = Depends(get_async_db)):
     return await GoldAccountService.account(db, shop_id)

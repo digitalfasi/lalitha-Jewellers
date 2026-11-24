@@ -59,6 +59,8 @@ export default function NewBill() {
 
   // "Make bill" from an estimate: the same shop, lines and (if still valid) rate.
   useEffect(() => {
+    const fromCalc = new URLSearchParams(window.location.search).get("rate");
+    if (fromCalc && Number(fromCalc) > 0) setGoldRate(fromCalc); // "New bill at this rate" from the calculator
     const id = new URLSearchParams(window.location.search).get("estimate");
     if (!id) return;
     billingService.getEstimate(id).then((e) => {

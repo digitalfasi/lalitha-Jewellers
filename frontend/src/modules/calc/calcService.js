@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "@/_shared/api/client";
+import { api, upload } from "@/_shared/api/client";
 
 // The calculator asks the server, which uses the same sums and rounding as the bills.
 export const calcService = {
@@ -9,6 +9,22 @@ export const calcService = {
   oldGold: (body) => api("/calc/old-gold", { method: "POST", body }),
   moneyToGold: (body) => api("/calc/money-to-gold", { method: "POST", body }),
   metalAccount: (body) => api("/calc/metal-account", { method: "POST", body }),
+  // Quick math (Excel style). Math errors come back as {status: "error", error: "#DIV/0!"}.
+  presets: () => api("/calc/presets"),
+  formula: (formula, values) => api("/calc/formula", { method: "POST", body: { formula, values } }),
+  grid: (a, b) => api("/calc/grid", { method: "POST", body: { a, b } }),
+  stats: (text) => api("/calc/stats", { method: "POST", body: { text } }),
+  savedFormulas: () => api("/calc/formulas"),
+  saveFormula: (body) => api("/calc/formulas", { method: "POST", body }),
+  deleteFormula: (id) => api(`/calc/formulas/${id}`, { method: "DELETE" }),
+  editFormula: (id, body) => api(`/calc/formulas/${id}`, { method: "PATCH", body }),
+  undoFormula: (id) => api(`/calc/formulas/${id}/undo`, { method: "POST" }),
+  importExcel: (file) => upload("/calc/import-excel", file),
+  sheet: (cells) => api("/calc/sheet", { method: "POST", body: { cells } }),
+  // This person's tape, sheet and pins, on every device.
+  me: () => api("/calc/me"),
+  saveMe: (body) => api("/calc/me", { method: "PUT", body }),
+  shopRecent: (shopId) => api(`/billing/shops/${shopId}/recent`),
 };
 
 /** A number from a text box, or null when empty / not a number. */

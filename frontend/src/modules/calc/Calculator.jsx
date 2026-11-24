@@ -1,31 +1,39 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import clsx from "clsx";
-import { AlertTriangle, ChevronDown, Copy, MessageCircle, RotateCcw, Star, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, Copy, ExternalLink, MessageCircle, Minus, RotateCcw, Star, X } from "lucide-react";
 import { api } from "@/_shared/api/client";
 import { beep } from "@/_shared/beep";
 import { localToday } from "@/_shared/dates";
-import Drawer from "@/_shared/components/Drawer";
 import ScaleButton from "@/_shared/components/ScaleButton";
+import CameraScan from "@/_shared/components/CameraScan";
 import { Button, Field, Input, Notice, Select } from "@/_shared/components/ui";
 import { useT } from "@/_shared/i18n/LanguageProvider";
 import { billingService } from "@/modules/billing/billingService";
 import { PURITIES, inventoryService } from "@/modules/inventory/inventoryService";
+import QuickMath from "./QuickMath";
 import RateChart from "./RateChart";
+import { ShareDialog } from "./ShareWhatsApp";
+import { FEATURES } from "@/_shared/features";
 import {
   GRAMS_PER_PAVAN, calcService, clearPersist, g3, history, num, pc, pv, rs, useLive, usePersist, w3,
 } from "./calcService";
 
 // The counter calculator: a side panel over any screen (F2). Nothing here is saved except
 // estimates. Today's rate and the shop's usual deal fill in; the sums come from the server.
-const MAIN = [["value", "Gold value"], ["quote", "Quick quote"], ["rates", "Rate chart"]];
-const MORE = [["old", "Old gold"], ["money", "Money → gold"], ["account", "Gold account"], ["gst", "GST"], ["history", "History"]];
+const MAIN = [["math", "Quick math"], ["value", "Gold value"], ["quote", "Quick quote"]];
+const MORE = [["rates", "Rate chart"], ["old", "Old gold"], ["money", "Money → gold"], ["account", "Gold account"], ["gst", "GST"], ["history", "History"]];
 const NEEDS_GST = ["value", "quote", "money"];
+const ALL = [["math", "Quick math"], ["value", "Gold value"], ["quote", "Quick quote"], ["rates", "Rate chart"], ["old", "Old gold"],
+  ["money", "Money → gold"], ["account", "Gold account"], ["gst", "GST"], ["history", "History"]];
 
-export default function Calculator({ open, onClose }) {
+/** All the calculator's tools. layout "popup": tabs on top, for the quick pop-up;
+ *  layout "page": tools down the left and a wide work area, for the Calculator page. */
+export function CalcWorkspace({ open = true, onClose = () => {}, layout = "popup", onResultChange, listen = true }) {
   const { t } = useT();
+  const page = layout === "page";
   const [s, setS] = usePersist("main", { tab: "value", rate: "", gst: "3", shopId: "", unit: "g", interstate: false });
   const set = (k) => (v) => setS((x) => ({ ...x, [k]: v }));
   const [rateInfo, setRateInfo] = useState(null); // {today, last}
@@ -35,6 +43,9 @@ export default function Calculator({ open, onClose }) {
   const [result, setResult] = useState(null); // {title, rows, total} from the open tab
   const [resets, setResets] = useState(0);
   const [kept, setKept] = useState(false);
+  const [recent, setRecent] = useState([]); // the chosen shop's last bills: rate and %
+  const [sharing, setSharing] = useState(false);
+  useEffect(() => onResultChange?.(result), [result]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Each time the panel opens: today's rate, shops (for their deals), our own state for IGST.
   useEffect(() => {
@@ -46,13 +57,82 @@ export default function Calculator({ open, onClose }) {
         setS((x) => (x.rate === "" || x.rateAuto ? { ...x, rate: v ? String(v) : "", rateAuto: true } : x));
       }).catch(() => {});
     loadRate();
+    const poll = setInterval(loadRate, 60000); // the day's rate, checked every minute
     billingService.listShops().then(setShops).catch(() => {});
     api("/business").then(setBiz).catch(() => {});
     window.addEventListener("rate:changed", loadRate);
-    return () => window.removeEventListener("rate:changed", loadRate);
+    return () => {
+      clearInterval(poll);
+      window.removeEventListener("rate:changed", loadRate);
+    };
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const shop = shops.find((x) => x.id === s.shopId) || null;
+  // When the owner changes the rate during the day, open sums follow it, with a note.
+  const seenRate = useRef(null);
+  const [rateNote, setRateNote] = useState(null);
+  useEffect(() => {
+    const v = rateInfo ? rateInfo.today?.rate ?? rateInfo.last?.rate : null;
+    if (v == null) return;
+    if (seenRate.current != null && seenRate.current !== v) setRateNote({ from: seenRate.current, to: v });
+    seenRate.current = v;
+  }, [rateInfo]);
+
+  // A tag scanned anywhere in the calculator goes onto Quick quote, with its weight, % and price.
+  const addToQuote = (raw) => {
+    const code = String(raw || "").trim().toUpperCase();
+    if (!/^[A-Z]{2,3}\d{3,}$/.test(code)) return;
+    let cur = { list: [] };
+    try {
+      cur = JSON.parse(sessionStorage.getItem("calc.v1.tab.quote")) || cur;
+    } catch {}
+    if (!cur.list.some((x) => x.code === code)) cur.list = [...cur.list, { code, touch: "" }];
+    try {
+      sessionStorage.setItem("calc.v1.tab.quote", JSON.stringify(cur));
+    } catch {}
+    beep(true);
+    setResult(null);
+    setS((x) => ({ ...x, tab: "quote" }));
+    setResets((n) => n + 1);
+  };
+  // A USB scanner types fast and ends with Enter; catch that when no box has the cursor.
+  useEffect(() => {
+    if (!open || !listen) return;
+    let buf = "";
+    let lastAt = 0;
+    const onKey = (e) => {
+      const el = e.target;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      const now = Date.now();
+      if (now - lastAt > 80) buf = "";
+      lastAt = now;
+      if (e.key === "Enter") {
+        if (buf.length >= 5) addToQuote(buf);
+        buf = "";
+      } else if (e.key.length === 1) buf += e.key;
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, listen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      {rateNote && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 font-medium text-amber-900">
+          {t("Rate changed {a} → {b}", { a: rs(rateNote.from), b: rs(rateNote.to) })}
+          <button onClick={() => setRateNote(null)} aria-label={t("Close")}><X size={12} /></button>
+        </span>
+      )}
+      <span className="ml-auto"><CameraScan onCode={addToQuote} className="h-8" label={t("Scan a tag")} /></span>
+    </div>
+  );
+
+  const rawShop = shops.find((x) => x.id === s.shopId) || null;
+  // Shop deals are switched off for bills, so the calculator ignores them too.
+  const shop = useMemo(() => (rawShop && !FEATURES.shopDeals
+    ? { ...rawShop, price_mode: null, deal_touch: null, deal_wastage: null, deal_making: null } : rawShop), [rawShop]);
+  useEffect(() => {
+    if (!s.shopId) return setRecent([]);
+    calcService.shopRecent(s.shopId).then(setRecent).catch(() => setRecent([]));
+  }, [s.shopId]);
   const interstate = shop ? !!(biz?.state_code && shop.state_code && biz.state_code !== shop.state_code) : s.interstate;
   const rate = num(s.rate);
   const usingOldRate = rateInfo && !rateInfo.today && s.rateAuto && rateInfo.last;
@@ -89,22 +169,123 @@ export default function Calculator({ open, onClose }) {
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="ghost" onClick={keep}><Star size={15} aria-hidden /> {kept ? t("Kept") : t("Keep")}</Button>
+        <Button variant="ghost" onClick={keep} aria-label={t("Keep")}><Star size={15} aria-hidden /> <span className="hidden sm:inline">{kept ? t("Kept") : t("Keep")}</span></Button>
         <CopyButton text={shareText} />
-        <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer"
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line px-3 text-sm font-medium hover:bg-canvas">
-          <MessageCircle size={15} aria-hidden /> WhatsApp
-        </a>
-        <Button variant="ghost" className="ml-auto" onClick={clear}><RotateCcw size={15} aria-hidden /> {t("Clear")}</Button>
+        <button onClick={() => setSharing(true)}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-green-600 px-3 text-sm font-semibold text-white hover:bg-green-700">
+          <MessageCircle size={15} aria-hidden /> {result.quote ? t("Send quotation") : "WhatsApp"}
+        </button>
+        <Button variant="ghost" className="ml-auto" onClick={clear} aria-label={t("Clear")}><RotateCcw size={15} aria-hidden /> <span className="hidden sm:inline">{t("Clear")}</span></Button>
       </div>
     </div>
   ) : s.tab !== "history" && s.tab !== "rates" ? (
     <div className="flex justify-end"><Button variant="ghost" onClick={clear}><RotateCcw size={15} aria-hidden /> {t("Clear")}</Button></div>
   ) : null;
 
+  const shareDialog = <ShareDialog open={sharing} onClose={() => setSharing(false)} result={result} biz={biz} shop={shop} />;
+  // The bar sticks to the bottom only when it has an answer to show; otherwise Clear sits in the flow.
+  const footerBar = footer && !result ? footer : footer && (
+    <div className={clsx("sticky bottom-0 z-10 bg-surface", page ? "bottom-[4.25rem] rounded-xl border border-line p-3 shadow-lg sm:bottom-0" : "-mx-4 -mb-4 border-t border-line px-4 py-3")}>
+      {footer}
+    </div>
+  );
+
+  if (page) {
+    return (
+      <div className="grid items-start gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
+        {/* Every tool in one list: down the left on a laptop, a scrolling row on a phone. */}
+        <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:sticky lg:top-4 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0" aria-label={t("Calculator tools")}>
+          {ALL.map(([k, label]) => (
+            <button key={k} onClick={() => choose(k)} aria-current={s.tab === k ? "page" : undefined}
+              className={clsx("shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm",
+                s.tab === k ? "bg-accent font-semibold text-white" : "text-muted hover:bg-surface hover:text-ink")}>
+              {t(label)}
+            </button>
+          ))}
+        </nav>
+        <div className="flex min-w-0 flex-col gap-4">
+          {toolbar}
+          {!["gst", "history", "math"].includes(s.tab) && (
+            <div className="flex flex-col gap-3 rounded-xl bg-canvas p-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={t("Gold rate ₹/g (fine)")}>
+                  <Input type="number" inputMode="decimal" min="0" step="0.01" value={s.rate}
+                    onChange={(e) => setS((x) => ({ ...x, rate: e.target.value, rateAuto: false }))} className="text-base tabular-nums" />
+                </Field>
+                {NEEDS_GST.includes(s.tab) ? (
+                  <Field label={t("GST %")}>
+                    <Input type="number" inputMode="decimal" min="0" max="28" step="0.01" value={s.gst} onChange={(e) => set("gst")(e.target.value)} className="text-base" />
+                  </Field>
+                ) : <div />}
+              </div>
+              {usingOldRate && (
+                <p className="flex items-start gap-1.5 text-xs text-amber-800">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+                  <span>{t("Today's rate isn't set. Using the last rate, from {d}.", { d: rateInfo.last.rate_date })}{" "}
+                    <Link href="/settings?tab=rate" onClick={onClose} className="font-medium underline">{t("Set today's rate")}</Link></span>
+                </p>
+              )}
+              {["value", "quote", "account"].includes(s.tab) && (
+                <Field label={t("Shop")} hint={shop?.price_mode ? t("Its usual deal fills in.") : undefined}>
+                  <Select value={s.shopId} onChange={(e) => set("shopId")(e.target.value)}>
+                    <option value="">{t("Any shop")}</option>
+                    {shops.map((x) => <option key={x.id} value={x.id}>{x.name}{x.city ? ` · ${x.city}` : ""}</option>)}
+                  </Select>
+                </Field>
+              )}
+              {["value", "quote", "account"].includes(s.tab) && recent.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 text-xs">
+                  <span className="text-muted">{t("Last bills")}:</span>
+                  {recent.map((b) => (
+                    <button key={b.bill_id} type="button" onClick={() => setS((x) => ({ ...x, rate: String(b.gold_rate), rateAuto: false }))}
+                      title={t("Use this rate")} className="rounded-full bg-surface px-2 py-0.5 tabular-nums hover:bg-accent-soft">
+                      {b.bill_date.slice(5).split("-").reverse().join("/")} · ₹{b.gold_rate.toLocaleString("en-IN")}{b.percent ? ` · ${b.percent}%` : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                {["value", "quote"].includes(s.tab) && (shop ? (
+                  <span className="text-xs text-muted">{interstate ? t("Other state: IGST") : t("Same state: CGST + SGST")}</span>
+                ) : (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={s.interstate} onChange={(e) => set("interstate")(e.target.checked)} className="h-4 w-4" />
+                    {t("Shop is in another state (IGST)")}
+                  </label>
+                ))}
+                {["value", "old", "account"].includes(s.tab) && (
+                  <span className="ml-auto flex items-center gap-1 rounded-lg bg-surface p-0.5 text-xs" role="group" aria-label={t("Type weights in")}>
+                    {[["g", "grams"], ["pavan", "pavan"]].map(([k, label]) => (
+                      <button key={k} onClick={() => set("unit")(k)}
+                        className={clsx("rounded-md px-2 py-1", s.unit === k ? "bg-accent text-white" : "text-muted")}>{t(label)}</button>
+                    ))}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div key={`${s.tab}-${resets}`}>
+            {s.tab === "math" && <QuickMath onResult={setResult} wide={page} />}
+            {s.tab === "value" && <ValueTab {...common} />}
+            {s.tab === "quote" && <QuoteTab {...common} onClose={onClose} />}
+            {s.tab === "rates" && <RateChart rate={rate} biz={biz} />}
+            {s.tab === "old" && <OldGoldTab {...common} />}
+            {s.tab === "money" && <MoneyTab {...common} />}
+            {s.tab === "account" && <AccountTab {...common} />}
+            {s.tab === "gst" && <GstTab {...common} />}
+            {s.tab === "history" && <HistoryTab />}
+          </div>
+          {footerBar}
+          {shareDialog}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <Drawer open={open} onClose={onClose} title={t("Calculator")} footer={footer}>
-      <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
+        {toolbar}
         {/* Tabs: the three everyday jobs big, the rest under More. */}
         <div className="relative grid grid-cols-4 gap-1.5" role="tablist">
           {MAIN.map(([k, label]) => (
@@ -125,7 +306,7 @@ export default function Calculator({ open, onClose }) {
           )}
         </div>
 
-        {s.tab !== "gst" && s.tab !== "history" && (
+        {!["gst", "history", "math"].includes(s.tab) && (
           <div className="flex flex-col gap-3 rounded-xl bg-canvas p-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label={t("Gold rate ₹/g (fine)")}>
@@ -153,6 +334,17 @@ export default function Calculator({ open, onClose }) {
                 </Select>
               </Field>
             )}
+            {["value", "quote", "account"].includes(s.tab) && recent.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1 text-xs">
+                <span className="text-muted">{t("Last bills")}:</span>
+                {recent.map((b) => (
+                  <button key={b.bill_id} type="button" onClick={() => setS((x) => ({ ...x, rate: String(b.gold_rate), rateAuto: false }))}
+                    title={t("Use this rate")} className="rounded-full bg-surface px-2 py-0.5 tabular-nums hover:bg-accent-soft">
+                    {b.bill_date.slice(5).split("-").reverse().join("/")} · ₹{b.gold_rate.toLocaleString("en-IN")}{b.percent ? ` · ${b.percent}%` : ""}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               {["value", "quote"].includes(s.tab) && (shop ? (
                 <span className="text-xs text-muted">{interstate ? t("Other state: IGST") : t("Same state: CGST + SGST")}</span>
@@ -175,6 +367,7 @@ export default function Calculator({ open, onClose }) {
         )}
 
         <div key={`${s.tab}-${resets}`}>
+          {s.tab === "math" && <QuickMath onResult={setResult} wide={page} />}
           {s.tab === "value" && <ValueTab {...common} />}
           {s.tab === "quote" && <QuoteTab {...common} onClose={onClose} />}
           {s.tab === "rates" && <RateChart rate={rate} biz={biz} />}
@@ -184,8 +377,55 @@ export default function Calculator({ open, onClose }) {
           {s.tab === "gst" && <GstTab {...common} />}
           {s.tab === "history" && <HistoryTab />}
         </div>
+      {footerBar}
+      {shareDialog}
+    </div>
+  );
+}
+
+/** The quick calculator: a centred card over any screen (full screen on a phone). F2 opens it;
+ *  Esc closes it; minimise keeps it as a small pill with the last answer; the full page is one tap away. */
+export default function Calculator({ open, onClose }) {
+  const { t } = useT();
+  const [min, setMin] = useState(false);
+  const [last, setLast] = useState(null);
+  useEffect(() => {
+    if (open) setMin(false);
+  }, [open]);
+  useEffect(() => {
+    if (!open || min) return;
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, min, onClose]);
+  if (!open) return null;
+  return (
+    <>
+      {min && (
+        <span className="fixed bottom-20 right-4 z-50 flex items-center gap-1 rounded-full bg-accent py-1 pl-4 pr-1 text-sm font-medium text-white shadow-lg lg:bottom-4">
+          <button onClick={() => setMin(false)} className="flex items-center gap-2 py-1.5">
+            {t("Calculator")}{last?.total?.[1] && <b className="tabular-nums">{last.total[1]}</b>}
+          </button>
+          <button onClick={onClose} className="rounded-full p-1.5 hover:bg-white/20" aria-label={t("Close")}><X size={14} /></button>
+        </span>
+      )}
+      <div className={clsx("fixed inset-0 z-50 flex items-end justify-center bg-black/30 sm:items-center sm:p-4", min && "hidden")} onClick={onClose}>
+        <div role="dialog" aria-modal="true" aria-label={t("Calculator")} onClick={(e) => e.stopPropagation()}
+          className="flex h-[100dvh] w-full flex-col overflow-hidden bg-surface shadow-2xl sm:h-auto sm:max-h-[88vh] sm:max-w-[620px] sm:rounded-2xl">
+          <header className="flex items-center gap-1 border-b border-line px-4 py-2.5">
+            <h2 className="flex-1 font-semibold">{t("Calculator")}</h2>
+            <Link href="/calculator" onClick={onClose} className="mr-1 inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-accent hover:bg-accent-soft">
+              {t("Open full calculator")} <ExternalLink size={14} aria-hidden />
+            </Link>
+            <button onClick={() => setMin(true)} className="rounded-lg p-2 text-muted hover:bg-canvas" aria-label={t("Minimise")} title={t("Minimise")}><Minus size={18} /></button>
+            <button onClick={onClose} className="rounded-lg p-2 text-muted hover:bg-canvas" aria-label={t("Close")} title={`${t("Close")} (Esc)`}><X size={18} /></button>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <CalcWorkspace open={open} onClose={onClose} layout="popup" onResultChange={setLast} listen={!min} />
+          </div>
+        </div>
       </div>
-    </Drawer>
+    </>
   );
 }
 
@@ -211,7 +451,7 @@ function CopyButton({ text }) {
       setTimeout(() => setCopied(false), 1500);
     } catch {}
   };
-  return <Button variant="ghost" onClick={copy}><Copy size={15} aria-hidden /> {copied ? t("Copied") : t("Copy")}</Button>;
+  return <Button variant="ghost" onClick={copy} aria-label={t("Copy")}><Copy size={15} aria-hidden /> <span className={copied ? "" : "hidden sm:inline"}>{copied ? t("Copied") : t("Copy")}</span></Button>;
 }
 
 /** A number box, big. Weight boxes follow the g / pavan switch; the scale fills grams. */
@@ -255,10 +495,10 @@ function Breakdown({ rows, error, waiting }) {
 }
 
 /** Sends the answer up to the panel's footer whenever it changes. */
-function useReport(onResult, res, build) {
+function useReport(onResult, res, build, extra) {
   useEffect(() => {
     onResult(res ? build(res) : null);
-  }, [res]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [res, extra]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 function ModeSwitch({ value, onChange, options }) {
@@ -415,6 +655,7 @@ function QuoteTab({ rate, gst, interstate, shop, onResult, onClose }) {
   const [code, setCode] = useState("");
   const [saved, setSaved] = useState(null);
   const [saveError, setSaveError] = useState(null);
+  const [offer, setOffer] = useState(""); // bargain mode: the total the shop wants to pay
 
   const add = (e) => {
     e.preventDefault();
@@ -448,7 +689,8 @@ function QuoteTab({ rate, gst, interstate, shop, onResult, onClose }) {
     ...tax(tot),
     q.problems.length > 0 && ["Not priced", q.problems.map((p) => p.code).join(", ")],
   ]);
-  useReport(onResult, tot ? q : null, () => ({ title: "Quick quote", rows, total: ["Total", rs(tot.grand_total), `${g3(tot.total_fine)} ${t("fine")}`] }));
+  useReport(onResult, tot ? q : null, () => ({ title: "Quick quote", rows, total: ["Total", rs(tot.grand_total), `${g3(tot.total_fine)} ${t("fine")}`],
+    quote: { lines: q.lines, totals: tot, rate: q.gold_rate, gst: q.gst_percent, problems: q.problems, estimate: saved } }), saved);
 
   const saveEstimate = async () => {
     setSaveError(null);
@@ -483,7 +725,7 @@ function QuoteTab({ rate, gst, interstate, shop, onResult, onClose }) {
                     : l && <div className="text-xs tabular-nums text-muted">{g3(l.fine_weight)} {t("fine")} · {rs(l.amount)}</div>}
                 </div>
                 <label className="flex flex-col text-[11px] text-muted">
-                  {t("Touch %")}
+                  %
                   <Input type="number" inputMode="decimal" step="0.01" min="0" max="200" value={x.touch}
                     placeholder={l ? String(l.touch_percent) : ""} aria-label={t("Touch for {code}", { code: x.code })}
                     onChange={(e) => setList((ls) => ls.map((y) => (y.code === x.code ? { ...y, touch: e.target.value } : y)))}
@@ -498,6 +740,8 @@ function QuoteTab({ rate, gst, interstate, shop, onResult, onClose }) {
       )}
       {error && <Notice tone="error">{error}</Notice>}
       {!list.length && <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">{t("Scan pieces or combos to see their price.")}</p>}
+      {tot && <Bargain tot={tot} q={q} offer={offer} setOffer={setOffer} rate={rate}
+        onApply={(pct) => setList((ls) => ls.map((y) => ({ ...y, touch: String(pct) })))} />}
       {tot && (
         <div className="flex flex-col gap-2 rounded-xl bg-canvas p-3 text-sm">
           {saved ? (
@@ -654,6 +898,47 @@ function HistoryTab() {
         </details>
       ))}
       <Button variant="link" className="self-start text-red-700" onClick={() => { history.clear(); setList([]); }}>{t("Clear history")}</Button>
+    </div>
+  );
+}
+
+
+/** Bargain mode: the shop names a total; work back to the % that gives it, and what it costs us. */
+function Bargain({ tot, q, offer, setOffer, rate, onApply }) {
+  const { t } = useT();
+  const want = num(offer);
+  const gst = Number(q.gst_percent) || 0;
+  const other = Number(tot.stone_amount || 0) + Number(tot.huid_amount || 0) + Number(tot.total_charges || 0);
+  const net = Number(tot.total_net);
+  const nowPct = net ? (Number(tot.total_fine) / net) * 100 : 0;
+  let need = null;
+  if (want && rate > 0 && net > 0) {
+    const fine = (want / (1 + gst / 100) - other) / rate;
+    need = { pct: Math.round((fine / net) * 100 * 100) / 100, fine, giveFine: Number(tot.total_fine) - fine, giveRs: Number(tot.grand_total) - want };
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm">
+      <label className="flex flex-wrap items-center gap-2 font-medium text-amber-900">
+        🤝 {t("Shop's offer (total ₹)")}
+        <Input type="number" inputMode="decimal" min="0" value={offer} onChange={(e) => setOffer(e.target.value)}
+          placeholder={String(Math.round(Number(tot.grand_total)))} className="h-9 w-36 bg-surface text-right tabular-nums" />
+      </label>
+      {need && (
+        need.pct <= 0 ? <span className="text-red-700">{t("That offer doesn't even cover the stones and charges.")}</span> : (
+          <>
+            <div className="text-amber-900">
+              {t("{o} means {p}% on every piece", { o: rs(want), p: need.pct })}
+              <span className="text-xs text-amber-900/70"> · {t("now {p}%", { p: Math.round(nowPct * 100) / 100 })}</span>
+            </div>
+            <div className={clsx("text-xs", need.giveFine > 0 ? "text-red-700" : "text-green-700")}>
+              {need.giveFine > 0
+                ? t("You give up {g} fine ({r})", { g: g3(need.giveFine), r: rs(need.giveRs) })
+                : t("That is {g} fine more than the quote ({r})", { g: g3(-need.giveFine), r: rs(-need.giveRs) })}
+            </div>
+            <Button variant="ghost" className="self-start bg-surface" onClick={() => onApply(need.pct)}>{t("Use {p}% on all items", { p: need.pct })}</Button>
+          </>
+        )
+      )}
     </div>
   );
 }

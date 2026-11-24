@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -156,3 +156,105 @@ class MetalOut(BaseModel):
     balance_pavan: Decimal
     balance_rupees: Decimal
     balance_direction: Literal["SHOP_OWES", "WE_OWE", "SETTLED"]
+
+
+# ------------------------------------------------------- Excel-style quick math
+
+Letter = Literal["A", "B", "C", "D", "E", "F", "G", "H", "ANS"]
+
+
+class FormulaIn(BaseModel):
+    formula: str = Field(..., max_length=500, description="Excel style, e.g. =ROUND(A*B/100, 2)")
+    values: Dict[str, Optional[Decimal]] = Field(default_factory=dict, description="A to H and ANS")
+
+    @model_validator(mode="after")
+    def _names(self):
+        bad = [k for k in self.values if k.upper() not in Letter.__args__]
+        if bad:
+            raise ValueError(f"Boxes are A to H (and ANS), not {', '.join(bad)}")
+        return self
+
+
+class FormulaOut(BaseModel):
+    status: Literal["ok", "error"]
+    formula_used: str
+    result: Optional[str] = None   # exact text, e.g. "30.06" or "TRUE"
+    error: Optional[str] = None    # #DIV/0!, #VALUE! or #NAME?
+    hint: Optional[str] = None     # the same, in plain words
+
+
+class GridIn(BaseModel):
+    a: Decimal = Field(..., ge=-10**15, le=10**15)
+    b: Decimal = Field(..., ge=-10**15, le=10**15)
+
+
+class GridItem(BaseModel):
+    key: str
+    label: str
+    formula: str
+    result: Optional[str] = None
+    error: Optional[str] = None
+
+
+class StatsIn(BaseModel):
+    text: str = Field(..., max_length=50_000, description="Pasted numbers: a column, a list, a message")
+
+
+class StatsOut(BaseModel):
+    count: int
+    sum: Optional[str] = None
+    average: Optional[str] = None
+    min: Optional[str] = None
+    max: Optional[str] = None
+    numbers: List[str]
+
+
+class SavedFormulaIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=60)
+    formula: str = Field(..., min_length=1, max_length=500)
+    hint: Optional[str] = Field(None, max_length=200)
+    labels: Optional[Dict[str, str]] = Field(None, description='What each box is called, {"A": "Less (g)"}')
+    example: Optional[Dict[str, Optional[Decimal]]] = Field(None, description="Box values to show as a worked example")
+
+
+class SavedFormulaEdit(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=60)
+    formula: Optional[str] = Field(None, min_length=1, max_length=500)
+    hint: Optional[str] = Field(None, max_length=200)
+    labels: Optional[Dict[str, str]] = None
+
+
+class SavedFormulaOut(BaseModel):
+    id: str
+    name: str
+    formula: str
+    hint: Optional[str] = None
+    letters: List[str]             # boxes the formula uses, e.g. ["A", "B"]
+    labels: Dict[str, str] = {}
+    example: Optional[dict] = None  # {"values": {"A": "2.14"}, "result": "1102.1"}
+    versions: int = 0               # earlier versions kept (Undo goes back one)
+    created_by_name: Optional[str] = None
+
+
+class SheetIn(BaseModel):
+    cells: Dict[str, str] = Field(..., description="A1 to J20: a number, a label or =formula")
+
+
+class MyCalcIn(BaseModel):
+    tape: Optional[List[dict]] = Field(None, max_length=50)
+    sheet: Optional[Dict[str, str]] = None
+    pins: Optional[List[str]] = Field(None, max_length=12)
+
+
+class MyCalcOut(BaseModel):
+    tape: List[dict] = []
+    sheet: Dict[str, str] = {}
+    pins: List[str] = []
+
+
+class ImportedFormula(BaseModel):
+    name: str
+    formula: str
+    labels: Dict[str, str] = {}
+    source: str                     # where it was in the file, e.g. Sheet1!D2
+    problem: Optional[str] = None   # why it can't be used as it is

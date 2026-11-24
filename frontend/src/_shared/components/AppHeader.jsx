@@ -23,6 +23,7 @@ const LINKS = [
   { href: "/inventory", label: "Stock", icon: Package },
   { href: "/combos", label: "Combos", icon: Link2 },
   { href: "/billing", label: "Billing", icon: Receipt },
+  { href: "/calculator", label: "Calculator", icon: CalcIcon },
   { href: "/tags", label: "Tags", icon: Tag },
   FEATURES.stockCount && { href: "/audit", label: "Stock count", icon: ScanLine },
   { href: "/catalogue", label: "Catalogue", icon: Images },
@@ -40,7 +41,7 @@ export default function AppHeader() {
     const onKey = (e) => {
       if (e.key === "F2") {
         e.preventDefault();
-        setCalc(true);
+        if (!window.location.pathname.startsWith("/calculator")) setCalc(true); // the page is already the calculator
       }
     };
     window.addEventListener("keydown", onKey);
