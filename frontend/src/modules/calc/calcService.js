@@ -25,6 +25,11 @@ export const calcService = {
   me: () => api("/calc/me"),
   saveMe: (body) => api("/calc/me", { method: "PUT", body }),
   shopRecent: (shopId) => api(`/billing/shops/${shopId}/recent`),
+  // Named sheets and recent quotes / sums, saved on the server.
+  items: (kind, q) => api(`/calc/items?kind=${kind}${q ? `&q=${encodeURIComponent(q)}` : ""}`),
+  item: (id) => api(`/calc/items/${id}`),
+  saveItem: (id, body) => api(`/calc/items/${id}`, { method: "PUT", body }),
+  deleteItem: (id) => api(`/calc/items/${id}`, { method: "DELETE" }),
 };
 
 /** A number from a text box, or null when empty / not a number. */

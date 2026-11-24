@@ -10,9 +10,11 @@ import EstimatesTab from "./EstimatesTab";
 import ProfitTab from "./ProfitTab";
 import { FEATURES } from "@/_shared/features";
 import ShopsTab from "./ShopsTab";
+import DraftsTab from "./DraftsTab";
 
 const ALL_TABS = [
   { id: "bills", label: "Bills" },
+  { id: "drafts", label: "Drafts" },
   { id: "estimates", label: "Estimates" },
   { id: "shops", label: "Shops" },
   FEATURES.profit && { id: "profit", label: "Profit", managers: true },
@@ -63,6 +65,7 @@ export default function BillingPage() {
         </div>
       </div>
       {tab === "bills" && <BillsList />}
+      {tab === "drafts" && <DraftsTab />}
       {tab === "estimates" && <EstimatesTab />}
       {tab === "shops" && <ShopsTab />}
       {FEATURES.profit && tab === "profit" && isManager(user) && <ProfitTab />}

@@ -43,3 +43,18 @@ async def test_rates_for_each_purity(client):
     assert r["purity_rates"]["24K"] == 15180
     assert r["purity_rates"]["22K"] == round(15180 * 0.916)
     assert r["purity_rates"]["18K"] == 11000 and r["custom_purities"] == ["18K"]
+
+
+async def test_huid_pieces_typed_drafts_and_calc_items(client, setup):  # noqa: F811
+    await client.put("/api/v1/business/charges", json={"huid_rate": 77})
+    q = (await client.post(f"{API}/quote", json=draft(setup["shop"]["id"], [{"code": "PD0001"}], huid_pieces=30))).json()
+    assert q["totals"]["huid_pieces"] == 30 and q["totals"]["huid_amount"] == 2310
+    d = (await client.put(f"{API}/drafts/d1", json={"data": {"lines": ["PD0001"]}, "shop_name": "X", "line_count": 1})).json()
+    assert d["line_count"] == 1 and [x["id"] for x in (await client.get(f"{API}/drafts")).json()] == ["d1"]
+    assert (await client.delete(f"{API}/drafts/d1")).status_code == 204
+    it = await client.put("/api/v1/calc/items/s1", json={"kind": "SHEET", "title": "Getti 20 Oct", "data": {"sheets": []}})
+    assert it.status_code == 200
+    assert (await client.get("/api/v1/calc/items?kind=SHEET&q=getti")).json()[0]["title"] == "Getti 20 Oct"
+    assert (await client.get("/api/v1/calc/items/s1")).json()["data"] == {"sheets": []}
+    f = (await client.post("/api/v1/calc/formulas", json={"name": "Stone", "formula": "A*515", "folder": "Stones"})).json()
+    assert f["folder"] == "Stones"

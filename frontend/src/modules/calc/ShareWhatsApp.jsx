@@ -21,9 +21,10 @@ export function waNumber(phone) {
   return d.length >= 11 && d.length <= 15 ? d : "";
 }
 
-export function buildMessage({ result, biz, shop, t, items = true, showRate = true }) {
+export function buildMessage({ result, biz, shop, t, items = true, showRate = true, note = "" }) {
   const out = [];
   if (biz?.name) out.push(`*${biz.name}*`);
+  if (note.trim()) out.push(note.trim(), "");
   const q = result.quote;
   if (q) {
     out.push(`*${t("Quotation")}*${q.estimate ? ` ${q.estimate.estimate_number}` : ""} · ${today()}`);
@@ -121,18 +122,31 @@ async function sharePicture(message, title) {
 }
 
 /** Preview before sending: the owner can tweak the words, pick the shop's number, then send. */
-export function ShareDialog({ open, onClose, result, biz, shop }) {
+export function ShareDialog({ open, onClose, result, biz, shop, onSent }) {
   const { t } = useT();
   const [items, setItems] = useState(true);
   const [showRate, setShowRate] = useState(true);
   const [text, setText] = useState("");
+  const [note, setNote] = useState(() => {
+    try {
+      return localStorage.getItem("share.note") || "";
+    } catch {
+      return "";
+    }
+  });
+  const keepNote = (v) => {
+    setNote(v);
+    try {
+      localStorage.setItem("share.note", v);
+    } catch {}
+  };
   const [phone, setPhone] = useState("");
   const [copied, setCopied] = useState(false);
   const isQuote = !!result?.quote;
 
   useEffect(() => {
-    if (open && result) setText(buildMessage({ result, biz, shop, t, items, showRate }));
-  }, [open, result, biz, shop, items, showRate]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (open && result) setText(buildMessage({ result, biz, shop, t, items, showRate, note }));
+  }, [open, result, biz, shop, items, showRate, note]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (open) setPhone(shop?.phone || "");
   }, [open, shop]);
@@ -158,6 +172,10 @@ export function ShareDialog({ open, onClose, result, biz, shop }) {
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:bg-canvas" aria-label={t("Close")}><X size={18} /></button>
         </header>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+          <Field label={t("Your message")} hint={t("Goes at the top, e.g. Vanakkam, here is today's quote. Remembered for next time.")}>
+            <textarea value={note} onChange={(e) => keepNote(e.target.value)} rows={2} maxLength={500}
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent" />
+          </Field>
           <div className="flex flex-wrap gap-4 text-sm">
             {isQuote && (
               <label className="flex items-center gap-2"><input type="checkbox" checked={items} onChange={(e) => setItems(e.target.checked)} className="h-4 w-4" /> {t("Show each item")}</label>
@@ -177,7 +195,7 @@ export function ShareDialog({ open, onClose, result, biz, shop }) {
           </Field>
         </div>
         <footer className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
-          <a href={link} target="_blank" rel="noopener noreferrer" onClick={onClose}
+          <a href={link} target="_blank" rel="noopener noreferrer" onClick={() => { onSent?.(); onClose(); }}
             className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-green-600 px-4 text-sm font-semibold text-white hover:bg-green-700">
             <MessageCircle size={16} aria-hidden /> {t("Send on WhatsApp")}
           </a>

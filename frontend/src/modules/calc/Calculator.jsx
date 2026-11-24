@@ -152,7 +152,18 @@ export function CalcWorkspace({ open = true, onClose = () => {}, layout = "popup
   const shareText = result && [t(result.title), shop ? shop.name : null,
     ...result.rows.map(([k, v, sub]) => `${t(k)}: ${v}${sub ? ` (${sub})` : ""}`),
     `${t(result.total[0])}: ${result.total[1]}`].filter(Boolean).join("\n");
+  const record = () => {
+    const q = result?.quote;
+    const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+    calcService.saveItem(id, {
+      kind: q ? "QUOTE" : "CALC", title: q ? `${t("Quote")} · ${q.lines.map((l) => l.code).join(", ")}`.slice(0, 150) : t(result.title),
+      total: String(result.total[1]).slice(0, 60), shop_name: shop?.name || null,
+      data: q ? { lines: q.lines.map((l) => ({ code: l.code, touch: String(l.touch_percent) })), shopId: shop?.id || null, text: shareText }
+        : { formula: result.title === "Quick math" ? result.total[0] : null, text: shareText, tab: s.tab },
+    }).catch(() => {});
+  };
   const keep = () => {
+    record();
     history.add({ title: t(result.title), total: result.total[1], text: shareText });
     setKept(true);
     setTimeout(() => setKept(false), 1500);
@@ -182,7 +193,26 @@ export function CalcWorkspace({ open = true, onClose = () => {}, layout = "popup
     <div className="flex justify-end"><Button variant="ghost" onClick={clear}><RotateCcw size={15} aria-hidden /> {t("Clear")}</Button></div>
   ) : null;
 
-  const shareDialog = <ShareDialog open={sharing} onClose={() => setSharing(false)} result={result} biz={biz} shop={shop} />;
+  const shareDialog = <ShareDialog open={sharing} onClose={() => setSharing(false)} result={result} biz={biz} shop={shop} onSent={record} />;
+  // Reopen a recent quote or sum from History.
+  const reopen = async (item) => {
+    const full = await calcService.item(item.id).catch(() => null);
+    if (!full) return;
+    if (full.kind === "QUOTE") {
+      try {
+        sessionStorage.setItem("calc.v1.tab.quote", JSON.stringify({ list: full.data.lines || [] }));
+      } catch {}
+      setS((x) => ({ ...x, tab: "quote", shopId: full.data.shopId || x.shopId }));
+    } else {
+      try {
+        const m = JSON.parse(sessionStorage.getItem("calc.v1.tab.math")) || {};
+        if (full.data.formula) sessionStorage.setItem("calc.v1.tab.math", JSON.stringify({ ...m, formula: full.data.formula, mode: "boxes" }));
+      } catch {}
+      setS((x) => ({ ...x, tab: full.data.formula ? "math" : full.data.tab || "math" }));
+    }
+    setResult(null);
+    setResets((n) => n + 1);
+  };
   // The bar sticks to the bottom only when it has an answer to show; otherwise Clear sits in the flow.
   const footerBar = footer && !result ? footer : footer && (
     <div className={clsx("sticky bottom-0 z-10 bg-surface", page ? "bottom-[4.25rem] rounded-xl border border-line p-3 shadow-lg sm:bottom-0" : "-mx-4 -mb-4 border-t border-line px-4 py-3")}>
@@ -274,7 +304,7 @@ export function CalcWorkspace({ open = true, onClose = () => {}, layout = "popup
             {s.tab === "money" && <MoneyTab {...common} />}
             {s.tab === "account" && <AccountTab {...common} />}
             {s.tab === "gst" && <GstTab {...common} />}
-            {s.tab === "history" && <HistoryTab />}
+            {s.tab === "history" && <HistoryTab onOpen={reopen} />}
           </div>
           {footerBar}
           {shareDialog}
@@ -375,7 +405,7 @@ export function CalcWorkspace({ open = true, onClose = () => {}, layout = "popup
           {s.tab === "money" && <MoneyTab {...common} />}
           {s.tab === "account" && <AccountTab {...common} />}
           {s.tab === "gst" && <GstTab {...common} />}
-          {s.tab === "history" && <HistoryTab />}
+          {s.tab === "history" && <HistoryTab onOpen={reopen} />}
         </div>
       {footerBar}
       {shareDialog}
@@ -880,9 +910,54 @@ function GstTab({ onResult }) {
   );
 }
 
-function HistoryTab() {
+function HistoryTab({ onOpen }) {
   const { t } = useT();
   const [list, setList] = useState(() => history.list());
+  const [recent, setRecent] = useState(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => calcService.items("QUOTE,CALC", q).then(setRecent).catch(() => setRecent([])), 250);
+    return () => clearTimeout(timer);
+  }, [q]);
+  const recentBlock = (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">{t("Recent quotes and sums")}</span>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Search shop or code")} className="ml-auto h-8 w-44" />
+      </div>
+      {recent === null ? <p className="text-xs text-muted">{t("Loading…")}</p> : recent.length === 0 ? (
+        <p className="text-xs text-muted">{t("Quotes and sums you keep or send on WhatsApp are listed here for everyone, newest first.")}</p>
+      ) : (
+        <ul className="divide-y divide-line rounded-xl border border-line">
+          {recent.map((r) => (
+            <li key={r.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+              <button onClick={() => onOpen(r)} className="min-w-0 flex-1 text-left">
+                <span className="block truncate font-medium">{r.title}</span>
+                <span className="block text-xs text-muted">
+                  {[r.shop_name, r.created_by_name, new Date(r.updated_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })].filter(Boolean).join(" · ")}
+                </span>
+              </button>
+              <span className="shrink-0 font-semibold tabular-nums">{r.total}</span>
+              <button onClick={() => calcService.deleteItem(r.id).then(() => setRecent(recent.filter((x) => x.id !== r.id)))}
+                className="shrink-0 text-muted hover:text-red-700" aria-label={t("Remove")}><X size={14} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+  if (!list.length) return recentBlock;
+  return (
+    <div className="flex flex-col gap-4">
+      {recentBlock}
+      <span className="text-sm font-medium">{t("Kept on this device")}</span>
+      <HistoryList list={list} setList={setList} />
+    </div>
+  );
+}
+
+function HistoryList({ list, setList }) {
+  const { t } = useT();
   if (!list.length) return <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">{t("Press Keep on an answer to find it here later. The last 10 are kept on this device.")}</p>;
   return (
     <div className="flex flex-col gap-2">

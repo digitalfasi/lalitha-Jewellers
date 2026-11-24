@@ -2,7 +2,7 @@
 A quote for real pieces is /billing/quote (same rules as the bill)."""
 from decimal import Decimal
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -132,3 +132,75 @@ async def import_excel(file: UploadFile = File(...)):
                dependencies=[Depends(require_role(*MANAGERS))])
 async def delete_formula(formula_id: str, db: AsyncSession = Depends(get_async_db)):
     await quick.SavedFormulaService.delete(db, formula_id)
+
+
+# ------------------------------------------- named sheets, recent quotes and sums
+
+from pydantic import BaseModel as _BM, Field as _F  # noqa: E402
+
+
+class ItemIn(_BM):
+    kind: str = _F(..., pattern="^(SHEET|QUOTE|CALC)$")
+    title: str = _F(..., min_length=1, max_length=150)
+    data: dict
+    total: Optional[str] = _F(None, max_length=60)
+    shop_name: Optional[str] = _F(None, max_length=150)
+
+
+def _item_out(r, full=False):
+    out = {"id": r.id, "kind": r.kind, "title": r.title, "total": r.total, "shop_name": r.shop_name,
+           "created_by_name": r.created_by_name, "updated_at": r.updated_at}
+    if full:
+        out["data"] = r.data
+    return out
+
+
+@router.get("/items")
+async def list_items(kind: Optional[str] = None, q: Optional[str] = None, db: AsyncSession = Depends(get_async_db)):
+    """Newest first: named sheets (kind=SHEET) or recent quotes and sums (QUOTE, CALC)."""
+    from sqlalchemy import func, select
+    from app.modules.calc.model import CalcItem
+    stmt = select(CalcItem)
+    if kind:
+        stmt = stmt.where(CalcItem.kind.in_(kind.upper().split(",")))
+    if q:
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(func.lower(CalcItem.title).like(like) | func.lower(func.coalesce(CalcItem.shop_name, "")).like(like))
+    rows = (await db.execute(stmt.order_by(CalcItem.updated_at.desc()).limit(50))).scalars()
+    return [_item_out(r) for r in rows]
+
+
+@router.get("/items/{item_id}")
+async def get_item(item_id: str, db: AsyncSession = Depends(get_async_db)):
+    from app._shared.exceptions.base import NotFoundException
+    from app.modules.calc.model import CalcItem
+    r = await db.get(CalcItem, item_id)
+    if not r:
+        raise NotFoundException("Not found.")
+    return _item_out(r, full=True)
+
+
+@router.put("/items/{item_id}")
+async def save_item(item_id: str, body: ItemIn, db: AsyncSession = Depends(get_async_db)):
+    import json
+    from app._shared.core.actor import actor_name
+    from app.modules.calc.model import CalcItem
+    if len(item_id) > 36 or len(json.dumps(body.data)) > 3_000_000:
+        raise ValidationException("That is too big to save.")
+    r = await db.get(CalcItem, item_id)
+    if r is None:
+        r = CalcItem(id=item_id, created_by_name=actor_name())
+        db.add(r)
+    r.kind, r.title, r.data, r.total, r.shop_name = body.kind, body.title, body.data, body.total, body.shop_name
+    await db.commit()
+    await db.refresh(r)
+    return _item_out(r)
+
+
+@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_item(item_id: str, db: AsyncSession = Depends(get_async_db)):
+    from app.modules.calc.model import CalcItem
+    r = await db.get(CalcItem, item_id)
+    if r:
+        await db.delete(r)
+        await db.commit()

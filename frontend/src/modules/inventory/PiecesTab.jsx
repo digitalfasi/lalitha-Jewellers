@@ -16,6 +16,7 @@ import { comboService } from "@/modules/combos/comboService";
 import { useTagPrinter } from "@/modules/tags/TagPrinter";
 import { grams, inventoryService } from "./inventoryService";
 import PieceForm from "./PieceForm";
+import { CodeKindSwitch, CodeMark, useCodeKind } from "@/modules/tags/CodeMark";
 import PieceHistory from "./PieceHistory";
 
 const TAG_NOTE = { NEW: "Tag not printed", COMBO_CHANGED: "Reprint tag: combo changed" };
@@ -25,7 +26,7 @@ const PAGE = 50;
 // One grid for the header and every row, so columns line up. On a laptop it
 // fits without sideways scrolling; below "lg" a row becomes two lines.
 // The columns follow the trade's own slip: gross - less = net, net x % = fine.
-const ROW = "grid items-center gap-x-3 px-3 grid-cols-[24px_48px_minmax(0,1fr)_auto] lg:grid-cols-[24px_48px_minmax(0,2fr)_48px_repeat(5,minmax(0,0.75fr))_minmax(0,1.2fr)_auto]";
+const ROW = "grid items-center gap-x-3 px-3 grid-cols-[24px_48px_minmax(0,1fr)_auto] lg:grid-cols-[24px_48px_minmax(0,2fr)_128px_48px_repeat(5,minmax(0,0.75fr))_minmax(0,1.2fr)_auto]";
 const fineOf = (p) => (p.touch_percent != null ? (Number(p.net_weight) * Number(p.touch_percent)) / 100 : null);
 const sumOf = (items, f) => items.reduce((a, p) => a + (Number(f(p)) || 0), 0);
 
@@ -37,6 +38,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
   const pickMode = params.get("pick") === "1";
   const pieceParam = params.get("piece");
   const { printTags, printer } = useTagPrinter();
+  const [codeKind, setCodeKind] = useCodeKind();
 
   const [filters, setFilters] = useState({ q: "", category_id: "", design_id: "", status: "IN_STOCK" });
   const [subs, setSubs] = useState([]); // sub-categories of the chosen category
@@ -246,6 +248,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
           <span />
           <span />
           <span>{t("Piece")}</span>
+          <span><CodeKindSwitch kind={codeKind} onChange={setCodeKind} /></span>
           <span>{t("Purity")}</span>
           <span className="text-right">{t("Gross")}</span>
           <span className="text-right">{t("Less")}</span>
@@ -313,6 +316,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
                     {chips}
                   </div>
                 </div>
+                <div className="hidden lg:block"><CodeMark code={p.item_code} kind={codeKind} onPrint={p.status === "IN_STOCK" ? () => printTags([p.item_code]) : null} /></div>
                 <div className="hidden lg:block"><PurityBadge purity={p.purity} /></div>
                 <div className="hidden text-right tabular-nums lg:block">{grams(p.gross_weight)}</div>
                 <div className="hidden text-right tabular-nums text-muted lg:block">{p.stone_weight > 0 ? grams(p.stone_weight) : "—"}</div>
@@ -345,6 +349,7 @@ export default function PiecesTab({ categories, onChanged, lot, onClearLot }) {
             <span />
             <span />
             <span>{pages > 1 ? t("Total (this page)") : t("Total")} · {data.items.length}</span>
+            <span />
             <span />
             <span className="text-right">{grams(sumOf(data.items, (p) => p.gross_weight))}</span>
             <span className="text-right">{grams(sumOf(data.items, (p) => p.stone_weight))}</span>

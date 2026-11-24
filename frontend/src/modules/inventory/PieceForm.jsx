@@ -50,6 +50,19 @@ export default function PieceForm({ categories, piece, onSaved, onSetSaved, onCa
     } catch {}
   };
   const [form, setForm] = useState(piece ? fromPiece(piece) : EMPTY);
+  useEffect(() => {
+    if (piece) return;
+    try {
+      const kept = JSON.parse(localStorage.getItem("pieceform.autosave"));
+      if (kept?.category_id) setForm({ ...EMPTY, ...kept });
+    } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (piece) return;
+    try {
+      localStorage.setItem("pieceform.autosave", JSON.stringify(form));
+    } catch {}
+  }, [form, piece]);
   const [designs, setDesigns] = useState([]);
   const [lots, setLots] = useState([]);
   const [busy, setBusy] = useState(false);

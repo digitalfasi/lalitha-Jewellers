@@ -213,3 +213,15 @@ class GoldEntry(Base, TimestampMixin):
     bill_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+
+class BillDraftRow(Base, TimestampMixin):
+    """A bill being made, saved to finish later. Nothing is sold until it is saved as a bill."""
+    __tablename__ = "bill_drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False)          # the New bill screen's state
+    shop_name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    line_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    grand_total: Mapped[Optional[Decimal]] = mapped_column(MONEY, nullable=True)
+    created_by_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

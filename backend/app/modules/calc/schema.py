@@ -214,10 +214,12 @@ class SavedFormulaIn(BaseModel):
     formula: str = Field(..., min_length=1, max_length=500)
     hint: Optional[str] = Field(None, max_length=200)
     labels: Optional[Dict[str, str]] = Field(None, description='What each box is called, {"A": "Less (g)"}')
+    folder: Optional[str] = Field(None, max_length=60)
     example: Optional[Dict[str, Optional[Decimal]]] = Field(None, description="Box values to show as a worked example")
 
 
 class SavedFormulaEdit(BaseModel):
+    folder: Optional[str] = Field(None, max_length=60)
     name: Optional[str] = Field(None, min_length=2, max_length=60)
     formula: Optional[str] = Field(None, min_length=1, max_length=500)
     hint: Optional[str] = Field(None, max_length=200)
@@ -231,6 +233,7 @@ class SavedFormulaOut(BaseModel):
     hint: Optional[str] = None
     letters: List[str]             # boxes the formula uses, e.g. ["A", "B"]
     labels: Dict[str, str] = {}
+    folder: Optional[str] = None
     example: Optional[dict] = None  # {"values": {"A": "2.14"}, "result": "1102.1"}
     versions: int = 0               # earlier versions kept (Undo goes back one)
     created_by_name: Optional[str] = None
@@ -242,13 +245,13 @@ class SheetIn(BaseModel):
 
 class MyCalcIn(BaseModel):
     tape: Optional[List[dict]] = Field(None, max_length=50)
-    sheet: Optional[Dict[str, str]] = None
+    sheet: Optional[object] = None   # the workbook (Excel-style sheets)
     pins: Optional[List[str]] = Field(None, max_length=12)
 
 
 class MyCalcOut(BaseModel):
     tape: List[dict] = []
-    sheet: Dict[str, str] = {}
+    sheet: object = None
     pins: List[str] = []
 
 

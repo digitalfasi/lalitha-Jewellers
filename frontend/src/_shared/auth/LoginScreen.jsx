@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { api } from "@/_shared/api/client";
 import { Button, Card, Field, Input, Notice } from "@/_shared/components/ui";
 import { LanguageSwitch, useT } from "@/_shared/i18n/LanguageProvider";
@@ -8,6 +9,7 @@ import { LanguageSwitch, useT } from "@/_shared/i18n/LanguageProvider";
 // Sign-in, or first-time setup (creates the owner) when the app has no users yet.
 export default function LoginScreen({ setup, notice, onSignedIn, onRetry }) {
   const { t } = useT();
+  const [showPw, setShowPw] = useState(false);
   const [form, setForm] = useState({ username: "", full_name: "", password: "", confirm: "" });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -55,12 +57,18 @@ export default function LoginScreen({ setup, notice, onSignedIn, onRetry }) {
             </Field>
           )}
           <Field label={t("Password")} hint={setup ? t("At least 8 characters") : undefined}>
-            <Input type="password" value={form.password} onChange={set("password")} required
-              autoComplete={setup ? "new-password" : "current-password"} minLength={setup ? 8 : 1} maxLength={72} />
+            <span className="relative block">
+              <Input type={showPw ? "text" : "password"} value={form.password} onChange={set("password")} required className="pr-10"
+                autoComplete={setup ? "new-password" : "current-password"} minLength={setup ? 8 : 1} maxLength={72} />
+              <button type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? t("Hide password") : t("Show password")}
+                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted hover:text-ink">
+                {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </span>
           </Field>
           {setup && (
             <Field label={t("Password again")}>
-              <Input type="password" value={form.confirm} onChange={set("confirm")} required autoComplete="new-password" />
+              <Input type={showPw ? "text" : "password"} value={form.confirm} onChange={set("confirm")} required autoComplete="new-password" />
             </Field>
           )}
           {error && <Notice tone="error">{error}</Notice>}

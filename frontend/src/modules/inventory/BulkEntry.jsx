@@ -7,6 +7,8 @@ import { Button, Card, Field, Input, Notice, Select } from "@/_shared/components
 import { FEATURES } from "@/_shared/features";
 import { useT } from "@/_shared/i18n/LanguageProvider";
 import { PURITIES, grams, inventoryService } from "./inventoryService";
+import { CodeKindSwitch, CodeMark, useCodeKind } from "@/modules/tags/CodeMark";
+import { useTagPrinter } from "@/modules/tags/TagPrinter";
 
 const COLUMNS = "Category, Sub-category, Name, Purity, Gross, Less, %, HUID";
 const TEMPLATE = `${COLUMNS}\nStone set,Dollar,,22K,15.84,2.14,103,\nStone set,Dollar,,22K,18.96,2.61,103,\n`;
@@ -41,6 +43,38 @@ export default function BulkEntry() {
   const [lotId, setLotId] = useState(params.get("lot") || "");
   const [pick, setPick] = useState({ category_id: "", design_id: "", purity: "22K", touch: "", count: "10" });
   const [rows, setRows] = useState([]); // {key, gid, category_id, design_id, purity, touch, name, gross, less, huid}
+  const [codeKind, setCodeKind] = useCodeKind();
+  // Print the new tags straight away; they also stay in Tags → "Tags to print" until confirmed printed.
+  const { printTags, printer } = useTagPrinter();
+  const [printAfter, setPrintAfter] = useState(true);
+  useEffect(() => {
+    try {
+      setPrintAfter(localStorage.getItem("bulk.printAfterSave") !== "0");
+    } catch {}
+  }, []);
+  const togglePrint = (v) => {
+    setPrintAfter(v);
+    try {
+      localStorage.setItem("bulk.printAfterSave", v ? "1" : "0");
+    } catch {}
+  };
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const kept = JSON.parse(localStorage.getItem("bulk.autosave"));
+      if (kept?.rows?.length) {
+        setRows(kept.rows.map((r) => ({ ...r, key: nextKey++ })));
+        if (kept.pick) setPick(kept.pick);
+      }
+    } catch {}
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      localStorage.setItem("bulk.autosave", JSON.stringify({ rows, pick }));
+    } catch {}
+  }, [rows, pick, ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const [paste, setPaste] = useState("");
   const [notice, setNotice] = useState(null);
   const [saved, setSaved] = useState(null);
@@ -152,7 +186,15 @@ export default function BulkEntry() {
       }));
       const res = await inventoryService.createPiecesBulk({ lot_id: (FEATURES.lots && lotId) || null, pieces });
       setSaved(res.items);
+      const codes = res.items.map((p) => p.item_code);
+      // A long run can tie up the label printer, so ask first; either way they wait in Tags to print.
+      if (printAfter && (codes.length <= 50 || window.confirm(t("Print {n} tags now? Press Cancel to print them later from Tags.", { n: codes.length })))) {
+        printTags(codes);
+      }
       setRows([]);
+      try {
+        localStorage.removeItem("bulk.autosave");
+      } catch {}
     } catch (err) {
       setNotice({ tone: "error", text: err.message });
     } finally {
@@ -165,6 +207,7 @@ export default function BulkEntry() {
     return (
       <div className="flex flex-col gap-5">
         <h1 className="text-2xl font-bold">{t("Bulk entry")}</h1>
+        {printer}
         <Card className="p-5">
           <Notice>{t("{n} pieces saved: {a} … {b}.", { n: saved.length, a: codes[0], b: codes[codes.length - 1] })}</Notice>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -174,7 +217,26 @@ export default function BulkEntry() {
             <Button variant="ghost" onClick={() => setSaved(null)}>{t("Enter more")}</Button>
             <Link href="/inventory" className="inline-flex h-9 items-center px-3 text-sm text-accent hover:underline">{t("Back to stock")}</Link>
           </div>
-          <p className="mt-4 font-mono text-xs text-muted">{codes.join("  ")}</p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm tabular-nums">
+              <thead className="text-left text-xs uppercase text-muted">
+                <tr><th className="py-1 pr-2">{t("Code")}</th><th className="py-1 pr-2"><CodeKindSwitch kind={codeKind} onChange={setCodeKind} /></th>
+                  <th className="py-1 pr-2">{t("Product")}</th><th className="py-1 pr-2 text-right">{t("Gross")}</th><th className="py-1 pr-2 text-right">{t("Less")}</th><th className="py-1 text-right">{t("Net")}</th></tr>
+              </thead>
+              <tbody>
+                {saved.map((p) => (
+                  <tr key={p.id} className="border-t border-line">
+                    <td className="py-1 pr-2 font-mono font-semibold">{p.item_code}</td>
+                    <td className="py-1 pr-2"><CodeMark code={p.item_code} kind={codeKind} /></td>
+                    <td className="py-1 pr-2">{p.name}</td>
+                    <td className="py-1 pr-2 text-right">{grams(p.gross_weight)}</td>
+                    <td className="py-1 pr-2 text-right">{p.stone_weight > 0 ? grams(p.stone_weight) : "—"}</td>
+                    <td className="py-1 text-right font-semibold">{grams(p.net_weight)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
     );
@@ -190,7 +252,7 @@ export default function BulkEntry() {
       </div>
 
       <Card className="p-5">
-        <div className="grid items-end gap-3 sm:grid-cols-3 lg:grid-cols-[1.2fr_1.2fr_0.7fr_0.7fr_0.6fr_auto]">
+        <div className="grid items-end gap-3 sm:grid-cols-3 lg:grid-cols-[1.2fr_1.2fr_0.7fr_0.6fr_0.8fr_auto]">
           <Field label={t("Category")}>
             <Select value={pick.category_id} onChange={(e) => setPick({ ...pick, category_id: e.target.value, design_id: "" })}>
               <option value="">{t("Choose…")}</option>
@@ -208,8 +270,11 @@ export default function BulkEntry() {
               {PURITIES.map((p) => <option key={p}>{p}</option>)}
             </Select>
           </Field>
-          <Field label="%">
-            <Input type="number" step="0.01" value={pick.touch} onChange={(e) => setPick({ ...pick, touch: e.target.value })} placeholder="103" />
+          <Field label={t("Code as")}>
+            <Select value={codeKind} onChange={(e) => setCodeKind(e.target.value)}>
+              <option value="qr">{t("QR code")}</option>
+              <option value="barcode">{t("Barcode")}</option>
+            </Select>
           </Field>
           <Field label={t("How many")}>
             <Input type="number" min="1" max="200" value={pick.count} onChange={(e) => setPick({ ...pick, count: e.target.value })} />
@@ -228,21 +293,20 @@ export default function BulkEntry() {
 
       {rows.length > 0 && (
         <Card className="overflow-x-auto p-0">
-          <table className="w-full min-w-[760px] table-fixed text-sm tabular-nums">
+          <table className="w-full min-w-[740px] table-fixed text-sm tabular-nums">
             {/* Fixed widths, so every number column lines up with its heading; Product takes the rest. */}
             <colgroup>
-              <col className="w-10" /><col /><col className="w-28" /><col className="w-24" /><col className="w-24" />
-              <col className="w-24" /><col className="w-24" /><col className="w-28" /><col className="w-10" />
+              <col className="w-10" /><col /><col className="w-28" /><col className="w-28" /><col className="w-24" /><col className="w-24" />
+              <col className="w-28" /><col className="w-10" />
             </colgroup>
             <thead className="bg-canvas text-left text-xs uppercase tracking-wide text-muted">
               <tr>
                 <th className={th}>#</th>
                 <th className={th}>{t("Product")}</th>
+                <th className={th}>{codeKind === "qr" ? t("QR code") : t("Barcode")}</th>
                 <th className={`${th} text-right`}>{t("Gross")}</th>
                 <th className={`${th} text-right`}>{t("Less")}</th>
                 <th className={`${th} text-right`}>{t("Net")}</th>
-                <th className={`${th} text-right`}>%</th>
-                <th className={`${th} text-right`}>{t("Fine")}</th>
                 <th className={th}>HUID</th>
                 <th />
               </tr>
@@ -254,14 +318,10 @@ export default function BulkEntry() {
                 return (
                   <Fragment key={g.gid}>
                     <tr className="border-t border-line bg-accent-soft/30">
-                      <td colSpan={5} className="px-2 py-1.5 font-semibold">
+                      <td colSpan={6} className="px-2 py-1.5 font-semibold">
                         {catName(first.category_id)}{sub ? ` · ${sub.name}` : ""} <span className="font-normal text-muted">· {first.purity}</span>
                       </td>
-                      <td className="px-2 py-1">
-                        <Input type="number" step="0.01" value={first.touch} onChange={(e) => setGroupTouch(g.gid, e.target.value)}
-                          className="ml-auto block h-8 w-20 text-right" title={t("Set % for every row in this group")} aria-label={t("Group %")} />
-                      </td>
-                      <td colSpan={3} className="px-2 text-right">
+                      <td colSpan={2} className="px-2 text-right">
                         <button onClick={() => setRows((rs) => rs.filter((x) => x.gid !== g.gid))} className="text-xs text-muted hover:text-red-700">{t("Remove group")}</button>
                       </td>
                     </tr>
@@ -274,11 +334,10 @@ export default function BulkEntry() {
                             <Input value={r.name} onChange={(e) => setRow(r.key, "name", e.target.value)} placeholder={sub?.name || catName(r.category_id)}
                               className="h-8 w-full max-w-56" aria-label={t("Row {n} name", { n: i + 1 })} />
                           </td>
+                          <td className="px-2 py-1 text-xs text-muted">{t("Given on save")}</td>
                           <td className="px-2 py-1"><Input data-col="gross" onKeyDown={onEnter} type="number" inputMode="decimal" step="0.001" value={r.gross} onChange={(e) => setRow(r.key, "gross", e.target.value)} className="ml-auto block h-8 w-24 text-right" aria-label={t("Row {n} gross", { n: i + 1 })} /></td>
                           <td className="px-2 py-1"><Input data-col="less" onKeyDown={onEnter} type="number" inputMode="decimal" step="0.001" value={r.less} onChange={(e) => setRow(r.key, "less", e.target.value)} className="ml-auto block h-8 w-20 text-right" placeholder="0" aria-label={t("Row {n} less", { n: i + 1 })} /></td>
                           <td className={`px-2 py-1 text-right ${netOf(r) <= 0 ? "text-red-600" : ""}`}>{g3(netOf(r))}</td>
-                          <td className="px-2 py-1"><Input data-col="touch" onKeyDown={onEnter} type="number" step="0.01" value={r.touch} onChange={(e) => setRow(r.key, "touch", e.target.value)} className="ml-auto block h-8 w-20 text-right" aria-label={t("Row {n} %", { n: i + 1 })} /></td>
-                          <td className="px-2 py-1 text-right font-semibold">{g3(fineOf(r))}</td>
                           <td className="px-2 py-1"><Input data-col="huid" onKeyDown={onEnter} value={r.huid} onChange={(e) => setRow(r.key, "huid", e.target.value.toUpperCase())} maxLength={6} className="h-8 w-full font-mono" aria-label={t("Row {n} HUID", { n: i + 1 })} /></td>
                           <td className="px-2 py-1">
                             <button onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} className="text-xs text-muted hover:text-red-700" aria-label={t("Remove row {n}", { n: i + 1 })}>✕</button>
@@ -289,11 +348,10 @@ export default function BulkEntry() {
                     <tr className="border-t border-line text-muted">
                       <td />
                       <td className="px-2 py-1 text-xs">{t("{n} pieces", { n: g.rows.filter((r) => r.gross).length })}</td>
+                      <td />
                       <td className="px-2 py-1 text-right">{g3(sum(g.rows, (r) => num(r.gross)))}</td>
                       <td className="px-2 py-1 text-right">{g3(sum(g.rows, (r) => num(r.less)))}</td>
                       <td className="px-2 py-1 text-right">{g3(sum(g.rows, netOf))}</td>
-                      <td />
-                      <td className="px-2 py-1 text-right font-semibold text-ink">{g3(sum(g.rows, fineOf))}</td>
                       <td colSpan={2} />
                     </tr>
                   </Fragment>
@@ -302,17 +360,20 @@ export default function BulkEntry() {
               <tr className="border-t-2 border-ink/70 bg-canvas font-semibold">
                 <td />
                 <td className="px-2 py-2">{t("Total")} · {filled.length}</td>
+                <td />
                 <td className="px-2 py-2 text-right">{g3(sum(rows, (r) => num(r.gross)))}</td>
                 <td className="px-2 py-2 text-right">{g3(sum(rows, (r) => num(r.less)))}</td>
                 <td className="px-2 py-2 text-right">{g3(sum(rows, netOf))}</td>
-                <td />
-                <td className="px-2 py-2 text-right">{g3(sum(rows, fineOf))}</td>
                 <td colSpan={2} />
               </tr>
             </tbody>
           </table>
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line p-3">
             <span className="text-sm text-muted">{t("Rows without a gross weight are skipped.")}</span>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={printAfter} onChange={(e) => togglePrint(e.target.checked)} className="h-4 w-4" />
+              {t("Print tags after saving")}
+            </label>
             <Button onClick={save} disabled={busy || filled.length === 0}>{busy ? t("Saving…") : t("Save {n} pieces", { n: filled.length })}</Button>
           </div>
         </Card>

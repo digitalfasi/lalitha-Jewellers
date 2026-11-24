@@ -263,7 +263,7 @@ async def _build(db: AsyncSession, draft: BillDraft, gold_rate: Decimal, interst
                 f"too, bill {combo.combo_code} as one line, or unlink first."
             )
 
-    return lines, totals(lines, d(draft.gst_percent), interstate, huid_rate, stone_rate)
+    return lines, totals(lines, d(draft.gst_percent), interstate, huid_rate, stone_rate, draft.huid_pieces)
 
 
 def _totals_out(t) -> BillTotals:

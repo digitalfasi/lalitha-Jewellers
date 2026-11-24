@@ -14,6 +14,10 @@ export const billingService = {
 
   quote: (draft) => api("/billing/quote", { method: "POST", body: draft }),
   createBill: (draft) => api("/billing/bills", { method: "POST", body: draft }),
+  // Bills being made, saved to finish later (nothing is sold until the bill is saved).
+  drafts: () => api("/billing/drafts"),
+  saveDraft: (id, body) => api(`/billing/drafts/${id}`, { method: "PUT", body }),
+  deleteDraft: (id) => api(`/billing/drafts/${id}`, { method: "DELETE" }),
   listBills: (params) => api(`/billing/bills${qs(params)}`),
   getBill: (id) => api(`/billing/bills/${id}`),
   cancelBill: (id, reason) => api(`/billing/bills/${id}/cancel`, { method: "POST", body: { reason } }),

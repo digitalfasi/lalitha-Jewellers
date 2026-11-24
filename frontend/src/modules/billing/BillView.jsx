@@ -214,7 +214,7 @@ export default function BillView({ id }) {
               <th className="py-2 pr-2 text-right">Net</th>
               <th className="py-2 pr-2 text-right">%</th>
               <th className="py-2 pr-2 text-right">Fine</th>
-              <th className="py-2 pr-2 text-right">Stones ₹</th>
+              <th className="py-2 pr-2 text-right">RS</th>
               <th className="py-2 text-right">Amount</th>
             </tr>
           </thead>
@@ -285,7 +285,7 @@ export default function BillView({ id }) {
           </div>
           <dl className="grid min-w-72 grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm tabular-nums">
             <dt className="text-muted">Gold ({grams(t.total_fine)} g fine × {num2(bill.gold_rate)})</dt><dd className="text-right">{inr(t.metal_amount)}</dd>
-            {t.stone_amount > 0 && <><dt className="text-muted">Stones ({grams(t.total_stone)} g × {num2(t.stone_rate)})</dt><dd className="text-right">{inr(t.stone_amount)}</dd></>}
+            {t.stone_amount > 0 && <><dt className="text-muted">RS (stones {grams(t.total_stone)} g × {num2(t.stone_rate)})</dt><dd className="text-right">{inr(t.stone_amount)}</dd></>}
             {t.huid_amount > 0 && <><dt className="text-muted">HUID ({t.huid_pieces} × {num2(t.huid_rate)})</dt><dd className="text-right">{inr(t.huid_amount)}</dd></>}
             {t.total_charges > 0 && <><dt className="text-muted">Other charges</dt><dd className="text-right">{inr(t.total_charges)}</dd></>}
             <dt className="text-muted">Taxable value</dt><dd className="text-right">{inr(t.subtotal)}</dd>

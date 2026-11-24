@@ -109,6 +109,7 @@ class BillDraft(BaseModel):
     gst_percent: float = Field(3, ge=0, le=28)
     stone_rate: Optional[float] = Field(None, ge=0, le=1_000_000, description="Rs per gram of less; blank = settings")
     huid_rate: Optional[float] = Field(None, ge=0, le=100_000, description="Rs per hallmarked piece; blank = settings")
+    huid_pieces: Optional[int] = Field(None, ge=0, le=100_000, description="Pieces charged for HUID; blank = pieces with a HUID")
     lines: List[BillLineIn] = Field(..., min_length=1, max_length=300)
     remarks: Optional[str] = Field(None, max_length=1000)
     estimate_id: Optional[str] = Field(None, description="The estimate this bill comes from; marked billed")

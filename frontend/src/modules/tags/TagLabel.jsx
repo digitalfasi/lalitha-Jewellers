@@ -8,7 +8,7 @@ import { LABEL_SIZES } from "./tagService";
 
 // The QR code and the barcode both hold only the code (CH0001 / CB0001), so
 // any scanner reads back the same text staff would type.
-function Barcode({ value }) {
+export function Barcode({ value }) {
   const ref = useRef(null);
   useEffect(() => {
     if (!ref.current) return;
@@ -25,7 +25,7 @@ function Barcode({ value }) {
   return <svg ref={ref} aria-label={`Barcode ${value}`} role="img" />;
 }
 
-function Qr({ value }) {
+export function Qr({ value }) {
   const [svg, setSvg] = useState("");
   useEffect(() => {
     let live = true;

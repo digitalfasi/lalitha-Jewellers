@@ -135,9 +135,10 @@ def huid_count(lines: List[LineCalc]) -> int:
 
 
 def totals(lines: List[LineCalc], gst_percent: Decimal, interstate: bool = False,
-           huid_rate: Decimal = Decimal("0"), stone_rate: Decimal = Decimal("0")) -> Totals:
+           huid_rate: Decimal = Decimal("0"), stone_rate: Decimal = Decimal("0"),
+           huid_pieces: Optional[int] = None) -> Totals:
     s = lambda attr: sum((getattr(l, attr) for l in lines), Decimal("0"))  # noqa: E731
-    huid_pieces = huid_count(lines)
+    huid_pieces = huid_count(lines) if huid_pieces is None else huid_pieces
     huid_amount = q2(huid_pieces * d(huid_rate))
     subtotal = s("amount") + huid_amount
     gst = q2(subtotal * gst_percent / HUNDRED)

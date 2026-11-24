@@ -65,7 +65,6 @@ export default function DesignsTab({ categories }) {
               <tr>
                 <th className="px-4 py-2.5">{t("Sub-category")}</th>
                 <th className="px-4 py-2.5">{t("Category")}</th>
-                <th className="px-4 py-2.5 text-right">{t("Usual %")}</th>
                 <th className="px-4 py-2.5 text-right">{t("In stock")}</th>
                 <th className="px-4 py-2.5" />
               </tr>
@@ -73,7 +72,7 @@ export default function DesignsTab({ categories }) {
             <tbody>
               {subs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-muted">{t("No sub-categories yet.")}</td>
+                  <td colSpan={4} className="px-4 py-8 text-center text-muted">{t("No sub-categories yet.")}</td>
                 </tr>
               )}
               {subs.map((d) =>
@@ -83,14 +82,9 @@ export default function DesignsTab({ categories }) {
                       <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} aria-label={t("Sub-category")} />
                     </td>
                     <td className="px-4 py-2">{d.category_name}</td>
-                    <td className="px-4 py-2">
-                      <Input type="number" step="0.01" value={editing.default_percent}
-                        onChange={(e) => setEditing({ ...editing, default_percent: e.target.value })}
-                        className="ml-auto w-24 text-right" aria-label={t("Usual %")} />
-                    </td>
                     <td />
                     <td className="space-x-2 whitespace-nowrap px-4 py-2 text-right">
-                      <Button onClick={() => update(d, { name: editing.name, default_percent: num(editing.default_percent) })}>{t("Save")}</Button>
+                      <Button onClick={() => update(d, { name: editing.name })}>{t("Save")}</Button>
                       <Button variant="ghost" onClick={() => setEditing(null)}>{t("Cancel")}</Button>
                     </td>
                   </tr>
@@ -101,9 +95,6 @@ export default function DesignsTab({ categories }) {
                       {!d.is_active && <span className="ml-2 text-xs">({t("inactive")})</span>}
                     </td>
                     <td className="px-4 py-2.5">{d.category_name}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {d.default_percent ?? <span className="text-muted" title={t("Most used so far")}>{d.usual_touch ?? "—"}</span>}
-                    </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{d.in_stock_count}</td>
                     <td className="space-x-3 whitespace-nowrap px-4 py-2.5 text-right">
                       <Button variant="link" onClick={() => setEditing({ id: d.id, name: d.name, default_percent: d.default_percent ?? "" })}>{t("Edit")}</Button>
@@ -130,10 +121,6 @@ export default function DesignsTab({ categories }) {
           </Field>
           <Field label={t("Sub-category name")}>
             <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Dollar" required minLength={2} />
-          </Field>
-          <Field label={t("Usual %")} hint={t("Optional. Fills in on new stock and bills, e.g. 103. Can be changed on each bill.")}>
-            <Input type="number" step="0.01" min="1" max="200" value={form.default_percent}
-              onChange={(e) => setForm({ ...form, default_percent: e.target.value })} />
           </Field>
           <Button type="submit" disabled={busy}>{busy ? t("Adding…") : t("Add sub-category")}</Button>
           {notice && <Notice tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Notice>}

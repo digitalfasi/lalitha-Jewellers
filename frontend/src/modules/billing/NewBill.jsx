@@ -41,6 +41,9 @@ export default function NewBill() {
   const [priceBy, setPriceBy] = useState("TOUCH");
   const [estimateId, setEstimateId] = useState(null); // the estimate this bill comes from
   const [remarks, setRemarks] = useState("");
+  const [huidPieces, setHuidPieces] = useState(""); // blank = pieces that have a HUID
+  const [draftId, setDraftId] = useState(null);     // set once saved as a draft
+  const [restored, setRestored] = useState(false);
   // [{code, kind: "PIECE"|"COMBO", comboCode, pieceCodes, charges, touch, photo, title, purity}]
   const [lines, setLines] = useState([]);
   const [undo, setUndo] = useState(null); // {lines, text} - the last removal, for one tap back
@@ -59,6 +62,34 @@ export default function NewBill() {
 
   // "Make bill" from an estimate: the same shop, lines and (if still valid) rate.
   useEffect(() => {
+    const apply = (d) => {
+      setShopId(d.shopId || ""); setBillDate(d.billDate || today()); setGoldRate(d.goldRate || ""); setGst(d.gst ?? "3");
+      setPriceBy(d.priceBy || "TOUCH"); setEstimateId(d.estimateId || null); setRemarks(d.remarks || "");
+      setLines(d.lines || []); setStoneRate(d.stoneRate || ""); setHuidRate(d.huidRate || ""); setHuidPieces(d.huidPieces || "");
+      setDraftId(d.draftId || null); setStep(d.lines?.length ? 1 : d.shopId ? 1 : 0);
+    };
+    const params = new URLSearchParams(window.location.search);
+    const draftParam = params.get("draft");
+    if (draftParam) {
+      billingService.drafts().then((list) => {
+        const d = list.find((x) => x.id === draftParam);
+        if (d) {
+          apply({ ...d.data, draftId: d.id });
+          setNotice({ tone: "ok", text: t("Draft opened.") });
+        }
+      }).finally(() => setRestored(true));
+      return;
+    }
+    if (!params.get("estimate") && !params.get("rate")) {
+      try {
+        const saved = JSON.parse(localStorage.getItem("newbill.autosave"));
+        if (saved?.lines?.length || saved?.shopId) {
+          apply(saved);
+          setNotice({ tone: "ok", text: t("Your unfinished bill is back.") });
+        }
+      } catch {}
+    }
+    setRestored(true);
     const fromCalc = new URLSearchParams(window.location.search).get("rate");
     if (fromCalc && Number(fromCalc) > 0) setGoldRate(fromCalc); // "New bill at this rate" from the calculator
     const id = new URLSearchParams(window.location.search).get("estimate");
@@ -105,6 +136,7 @@ export default function NewBill() {
       gst_percent: gst === "" ? 0 : parseFloat(gst),
       stone_rate: stoneRate === "" ? null : parseFloat(stoneRate) || 0,
       huid_rate: huidRate === "" ? null : parseFloat(huidRate) || 0,
+      huid_pieces: huidPieces === "" ? null : parseInt(huidPieces, 10) || 0,
       remarks: remarks || null,
       lines: lines.map((l) => {
         // Blank boxes take the shop's usual deal.
@@ -123,7 +155,7 @@ export default function NewBill() {
       }),
       estimate_id: estimateId,
     }),
-    [shopId, billDate, goldRate, gst, stoneRate, huidRate, remarks, lines, priceBy, shopDeal, estimateId],
+    [shopId, billDate, goldRate, gst, stoneRate, huidRate, huidPieces, remarks, lines, priceBy, shopDeal, estimateId],
   );
   const rateOk = goldRate === "" ? !!dayRate : draft.gold_rate > 0;
   const shop = shops.find((s) => s.id === shopId);
@@ -232,11 +264,43 @@ export default function NewBill() {
     setNotice(null);
     try {
       const bill = await billingService.createBill(draft);
+      try {
+        localStorage.removeItem("newbill.autosave");
+      } catch {}
+      if (draftId) billingService.deleteDraft(draftId).catch(() => {});
       router.push(`/billing/${bill.id}`);
     } catch (err) {
       setNotice({ tone: "error", text: err.message });
       setSaving(false);
     }
+  };
+
+  // Everything typed is kept on this device until the bill is saved, so leaving to check stock loses nothing.
+  const snapshot = { shopId, billDate, goldRate, gst, priceBy, estimateId, remarks, lines, stoneRate, huidRate, huidPieces, draftId };
+  useEffect(() => {
+    if (!restored) return;
+    try {
+      localStorage.setItem("newbill.autosave", JSON.stringify(snapshot));
+    } catch {}
+  }, [restored, JSON.stringify(snapshot)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [draftSaved, setDraftSaved] = useState(false);
+  const saveDraft = async () => {
+    const id = draftId || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    try {
+      await billingService.saveDraft(id, { data: { ...snapshot, draftId: id }, shop_name: shop?.name || null,
+        line_count: lines.length, grand_total: quote?.totals?.grand_total ?? null });
+      setDraftId(id);
+      setDraftSaved(true);
+      setTimeout(() => setDraftSaved(false), 2000);
+    } catch (err) {
+      setNotice({ tone: "error", text: err.message });
+    }
+  };
+  const startOver = () => {
+    try {
+      localStorage.removeItem("newbill.autosave");
+    } catch {}
+    window.location.href = "/billing/new";
   };
 
   const tot = quote?.totals;
@@ -247,7 +311,10 @@ export default function NewBill() {
     <div className="mx-auto flex max-w-5xl flex-col gap-5">
       <div>
         <Link href="/billing" className="text-sm text-muted hover:text-ink">← {t("Billing")}</Link>
-        <h1 className="text-2xl font-bold">{t("New bill")}</h1>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h1 className="text-2xl font-bold">{t("New bill")}{draftId && <span className="ml-2 align-middle text-xs font-normal text-muted">({t("draft")})</span>}</h1>
+          {(lines.length > 0 || shopId) && <button onClick={startOver} className="text-sm text-muted hover:text-red-700">{t("Start a new bill")}</button>}
+        </div>
       </div>
 
       {/* Step indicator: tap a finished step to go back to it. */}
@@ -374,13 +441,7 @@ export default function NewBill() {
                         <div className="truncate text-sm">{ql ? ql.description : l.title || (l.pieceCodes || []).join(" + ")}</div>
                         {ql && <div className="text-xs tabular-nums text-muted">{t("Gross")} {grams(ql.gross_weight)}{ql.stone_weight > 0 ? ` · ${t("Less")} ${grams(ql.stone_weight)}` : ""} · {t("Net")} {grams(ql.net_weight)} · <b className="text-ink">{t("Fine")} {grams(ql.fine_weight)}</b></div>}
                       </div>
-                      {priceBy === "TOUCH" ? (
-                        <label className="flex flex-col text-xs text-muted">
-                          %
-                          <Input type="number" inputMode="decimal" min="0" max="200" step="0.01" value={l.touch} onChange={(e) => setLine(i, "touch", e.target.value)}
-                            placeholder={ql ? String(ql.touch_percent) : ""} className="h-9 w-20 text-right" aria-label={t("% for {code}", { code: l.code })} />
-                        </label>
-                      ) : (
+                      {priceBy === "TOUCH" ? null : (
                         <>
                           <label className="flex flex-col text-xs text-muted">
                             {t("Wastage %")}
@@ -473,7 +534,7 @@ export default function NewBill() {
                       <th className="px-2 text-left">{t("Purity")}</th>
                       <th className="px-2 text-right">{t("Gross")}</th><th className="px-2 text-right">{t("Less")}</th>
                       <th className="px-2 text-right">{t("Net")}</th><th className="px-2 text-right">%</th>
-                      <th className="px-2 text-right">{t("Fine")}</th><th className="px-2 text-right">{t("Stones ₹")}</th>
+                      <th className="px-2 text-right">{t("Fine")}</th><th className="px-2 text-right">"RS"</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
@@ -508,7 +569,7 @@ export default function NewBill() {
                 </table>
               </div>
             )}
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Field label={t("Stones ₹ / g of less")} hint={t("From Settings. Change for this bill.")}>
                 <Input type="number" inputMode="decimal" min="0" step="0.01" value={stoneRate} onChange={(e) => setStoneRate(e.target.value)}
                   placeholder={biz?.stone_rate != null ? String(biz.stone_rate) : "0"} />
@@ -516,6 +577,10 @@ export default function NewBill() {
               <Field label={t("HUID ₹ / piece")} hint={tot ? t("{n} pieces have a HUID", { n: tot.huid_pieces }) : undefined}>
                 <Input type="number" inputMode="decimal" min="0" step="0.01" value={huidRate} onChange={(e) => setHuidRate(e.target.value)}
                   placeholder={biz?.huid_rate != null ? String(biz.huid_rate) : "0"} />
+              </Field>
+              <Field label={t("HUID pieces")} hint={t("Blank = pieces with a HUID")}>
+                <Input type="number" inputMode="numeric" min="0" step="1" value={huidPieces} onChange={(e) => setHuidPieces(e.target.value)}
+                  placeholder={tot ? String(tot.huid_pieces) : "0"} />
               </Field>
               <Field label="GST %">
                 <Input type="number" inputMode="decimal" min="0" max="28" step="0.01" value={gst} onChange={(e) => setGst(e.target.value)} />
@@ -532,7 +597,7 @@ export default function NewBill() {
               <dt className="text-muted">{t("Pieces")}</dt><dd className="text-right">{tot ? tot.total_pieces : "—"}</dd>
               <dt className="text-muted">{t("Fine weight")}</dt><dd className="text-right font-medium">{tot ? `${grams(tot.total_fine)} g` : "—"}</dd>
               <dt className="text-muted">{t("Gold")} {tot ? `(${grams(tot.total_fine)} × ${num2(quote.gold_rate)})` : ""}</dt><dd className="text-right">{tot ? inr(tot.metal_amount) : "—"}</dd>
-              {tot?.stone_amount > 0 && <><dt className="text-muted">{t("Stones")} ({grams(tot.total_stone)} × {num2(tot.stone_rate)})</dt><dd className="text-right">{inr(tot.stone_amount)}</dd></>}
+              {tot?.stone_amount > 0 && <><dt className="text-muted">RS ({t("stones")} {grams(tot.total_stone)} × {num2(tot.stone_rate)})</dt><dd className="text-right">{inr(tot.stone_amount)}</dd></>}
               {tot?.huid_amount > 0 && <><dt className="text-muted">HUID ({tot.huid_pieces} × {num2(tot.huid_rate)})</dt><dd className="text-right">{inr(tot.huid_amount)}</dd></>}
               {tot?.total_charges > 0 && <><dt className="text-muted">{t("Other charges")}</dt><dd className="text-right">{inr(tot.total_charges)}</dd></>}
               <dt className="text-muted">{t("Taxable value")}</dt><dd className="text-right">{tot ? inr(tot.subtotal) : "—"}</dd>
@@ -548,7 +613,10 @@ export default function NewBill() {
               <dt className="mt-2 border-t border-line pt-2 text-base font-semibold">{t("Total")}</dt>
               <dd className="mt-2 border-t border-line pt-2 text-right text-2xl font-bold">{tot ? inr(tot.grand_total) : "—"}</dd>
             </dl>
-            <Button onClick={save} disabled={!canSave} className="mt-4 h-12 w-full text-base">
+            <Button variant="ghost" onClick={saveDraft} disabled={!lines.length && !shopId} className="mt-4 h-10 w-full">
+              {draftSaved ? t("Draft saved") : t("Save as draft")}
+            </Button>
+            <Button onClick={save} disabled={!canSave} className="mt-2 h-12 w-full text-base">
               {saving ? t("Saving…") : !rateOk ? t("Set the gold rate") : t("Save bill")}
             </Button>
             <p className="mt-2 text-xs text-muted">{t("Saving marks every piece and combo on this bill as sold.")}</p>

@@ -177,7 +177,7 @@ class _Doc:
             elif line.pieces and line.pieces[0].huid:
                 sub.append(f"HUID {line.pieces[0].huid}")
             if getattr(line, "stone_amount", 0):
-                sub.append(f"Stones ₹{_inr(line.stone_amount)}")
+                sub.append(f"RS ₹{_inr(line.stone_amount)}")
             if line.charges:
                 sub.append(f"Charges ₹{_inr(line.charges)}")
             desc_lines = _wrap(desc, BOLD, 8.5, 57 * mm)
@@ -214,7 +214,7 @@ class _Doc:
         # totals box (right) and words / bank / terms (left)
         rows = [(f"Gold ({_g(t.total_fine)} g fine x {_inr(b.gold_rate)})", _inr(t.metal_amount))]
         if t.stone_amount:
-            rows.append((f"Stones ({_g(t.total_stone)} g x {_inr(t.stone_rate)})", _inr(t.stone_amount)))
+            rows.append((f"RS (stones {_g(t.total_stone)} g x {_inr(t.stone_rate)})", _inr(t.stone_amount)))
         if t.huid_amount:
             rows.append((f"HUID ({t.huid_pieces} x {_inr(t.huid_rate)})", _inr(t.huid_amount)))
         if t.total_charges:

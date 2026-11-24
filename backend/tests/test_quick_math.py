@@ -109,8 +109,8 @@ async def test_live_values_me_edit_undo_import_and_shop_recent(client):
     assert (await client.get(f"{API}/presets")).json()["live"]["STONE"] == "515"
 
     me = (await client.put(f"{API}/me", json={"tape": [{"expr": "1+1", "result": "2"}], "pins": ["x"], "sheet": {"a1": "5"}})).json()
-    assert me == {"tape": [{"expr": "1+1", "result": "2"}], "sheet": {"A1": "5"}, "pins": ["x"]}
-    assert (await client.get(f"{API}/me")).json()["sheet"] == {"A1": "5"}
+    assert me == {"tape": [{"expr": "1+1", "result": "2"}], "sheet": {"a1": "5"}, "pins": ["x"]}
+    assert (await client.get(f"{API}/me")).json()["sheet"] == {"a1": "5"}
 
     f = (await client.post(f"{API}/formulas", json={"name": "Stones", "formula": "A*515", "labels": {"A": "Less (g)"},
                                                     "example": {"A": 2.14}})).json()

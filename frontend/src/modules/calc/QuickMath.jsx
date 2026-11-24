@@ -10,7 +10,8 @@ import { Button, Field, Input, Notice, Select } from "@/_shared/components/ui";
 import { useT } from "@/_shared/i18n/LanguageProvider";
 import { inventoryService } from "@/modules/inventory/inventoryService";
 import { calcService, useLive, usePersist } from "./calcService";
-import { ExcelImport, MiniSheet, SlipPhoto, VoiceButton, printTape, shareTapePicture } from "./MathExtras";
+import { ExcelImport, SlipPhoto, VoiceButton, printTape, shareTapePicture } from "./MathExtras";
+import ExcelSheet, { SheetFiles, addRowsToBook } from "./ExcelSheet";
 
 // Quick math, like the owner's Excel sheet but faster: type A and B and every common answer
 // shows at once; write any Excel formula (with today's RATE, STONE, HUID); use the mini sheet;
@@ -23,6 +24,13 @@ const COMMON = ["SUM", "ROUND", "IF", "AVERAGE", "MAX", "MIN", "ROUNDUP", "ROUND
 const LIVE = ["RATE", "RATE22", "STONE", "HUID"];
 const TAG_FIELDS = [["net_weight", "Net"], ["gross_weight", "Gross"], ["stone_weight", "Less"], ["touch_percent", "%"], ["fine", "Fine"]];
 const TAPE_KEY = "calc.tape";
+
+/** Saved formulas grouped by folder; those without a folder come first. */
+const groupFolders = (list) => {
+  const m = new Map();
+  list.forEach((f) => (m.get(f.folder || "") || m.set(f.folder || "", []).get(f.folder || "")).push(f));
+  return [...m.entries()].sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+};
 
 /** A sum typed in plain words, turned into a formula the formula box understands. */
 export function toFormula(text) {
@@ -116,6 +124,7 @@ export default function QuickMath({ onResult, wide = false }) {
   const [tagCode, setTagCode] = useState("");
   const formulaRef = useRef(null);
   const [cmd, setCmd] = useState("");
+  const [fq, setFq] = useState(""); // search in saved formulas
   const [moreAns, setMoreAns] = useState(false);
   const undoStack = useRef([]);
   const redoStack = useRef([]);
@@ -128,7 +137,7 @@ export default function QuickMath({ onResult, wide = false }) {
   useEffect(() => {
     calcService.me().then((me) => {
       setRows(me.tape?.length ? me.tape : localTape.get());
-      setSheet(me.sheet || {});
+      setSheet(me.sheet || null);
       setPins(me.pins || []);
     }).catch(() => setRows(localTape.get())).finally(() => setLoaded(true));
     const loadLive = () => calcService.presets().then((p) => setLive(p.live || {})).catch(() => {});
@@ -278,7 +287,7 @@ export default function QuickMath({ onResult, wide = false }) {
   const saveFormula = async () => {
     setError(null);
     try {
-      await calcService.saveFormula({ name: saving.name, formula: s.formula, hint: saving.hint || null, labels: saving.labels, example: filled });
+      await calcService.saveFormula({ name: saving.name, formula: s.formula, hint: saving.hint || null, labels: saving.labels, example: filled, folder: saving.folder || null });
       setSaving(null);
       loadSaved();
     } catch (err) {
@@ -321,7 +330,7 @@ export default function QuickMath({ onResult, wide = false }) {
     : null;
 
   useEffect(() => {
-    const snap = JSON.stringify({ values: s.values, formula: s.formula, sheet });
+    const snap = JSON.stringify({ values: s.values, formula: s.formula });
     if (skipSnap.current) {
       skipSnap.current = false;
       lastSnap.current = snap;
@@ -336,12 +345,11 @@ export default function QuickMath({ onResult, wide = false }) {
       lastSnap.current = snap;
     }, 400);
     return () => clearTimeout(timer);
-  }, [s.values, s.formula, sheet]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [s.values, s.formula]); // eslint-disable-line react-hooks/exhaustive-deps
   const restore = (snap) => {
     const o = JSON.parse(snap);
     skipSnap.current = true;
     setS((x) => ({ ...x, values: o.values, formula: o.formula }));
-    setSheet(o.sheet);
     setTick((n) => n + 1);
   };
   const undo = () => {
@@ -354,7 +362,7 @@ export default function QuickMath({ onResult, wide = false }) {
   };
   useEffect(() => {
     const onKey = (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      if (!(e.ctrlKey || e.metaKey) || s.mode === "sheet") return;
       const k = e.key.toLowerCase();
       if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
@@ -416,15 +424,9 @@ export default function QuickMath({ onResult, wide = false }) {
       </div>
       {s.mode === "sheet" ? (
         <>
-          <SlipPhoto onRows={(lines) => setSheet((cells) => {
-            const used = new Set(Object.keys(cells).filter((k) => cells[k]).map((k) => Number(k.slice(1))));
-            let r = 1;
-            while (used.has(r) && r < 20) r += 1;
-            const next = { ...cells };
-            lines.slice(0, 21 - r).forEach((nums, i) => nums.slice(0, 10).forEach((v, j) => (next[`${"ABCDEFGHIJ"[j]}${r + i}`] = v)));
-            return next;
-          })} />
-          <MiniSheet cells={sheet} onChange={setSheet} fmt={fmt} />
+          <SlipPhoto onRows={(lines) => setSheet((book) => addRowsToBook(book, lines))} />
+          <SheetFiles book={sheet} onOpen={setSheet} />
+          <ExcelSheet book={sheet} onChange={setSheet} />
         </>
       ) : (
         <>
@@ -609,6 +611,10 @@ export default function QuickMath({ onResult, wide = false }) {
             {saving && (
               <div className="flex flex-col gap-2 rounded-xl border border-accent p-3">
                 <Field label={t("Name")}><Input value={saving.name} onChange={(e) => setSaving({ ...saving, name: e.target.value })} placeholder={t("e.g. Stone charge")} autoFocus maxLength={60} /></Field>
+                <Field label={t("Folder")} hint={t("Optional, e.g. Stones, Exchange")}>
+                  <Input value={saving.folder || ""} onChange={(e) => setSaving({ ...saving, folder: e.target.value })} list="calc-folders" maxLength={60} />
+                  <datalist id="calc-folders">{[...new Set(saved.map((f) => f.folder).filter(Boolean))].map((f) => <option key={f} value={f} />)}</datalist>
+                </Field>
                 {Object.keys(saving.labels).length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
                     {Object.keys(saving.labels).map((l) => (
@@ -627,17 +633,25 @@ export default function QuickMath({ onResult, wide = false }) {
               </div>
             )}
             {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+            {saved.length > 6 && (
+              <Input value={fq} onChange={(e) => setFq(e.target.value)} placeholder={t("Search formulas")} className="h-8" />
+            )}
             {saved.length === 0 ? (
               <p className="text-xs text-muted">{manager ? t("Write a formula you use often, then press Save this formula. It becomes a button for all staff.") : t("The owner can save formulas here for everyone.")}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {saved.map((f) => (
+                {groupFolders(saved.filter((f) => !fq || `${f.name} ${f.folder || ""} ${f.formula}`.toLowerCase().includes(fq.toLowerCase()))).map(([folder, list]) => (
+                  <span key={folder || "-"} className="flex w-full flex-wrap items-center gap-1.5">
+                    {folder && <span className="w-full text-[11px] font-semibold uppercase tracking-wide text-muted">{folder}</span>}
+                {list.map((f) => (
                   <span key={f.id} className={clsx("inline-flex items-center rounded-full border text-sm", activeSaved?.id === f.id ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface")}>
                     <button type="button" onClick={() => togglePin(f)} className="pl-2 text-muted hover:text-accent" aria-label={t("Pin {n}", { n: f.name })}>
                       <Star size={12} className={pins.includes(f.id) ? "fill-current text-accent" : ""} />
                     </button>
                     <button type="button" onClick={() => applySaved(f)} className="px-2 py-1" title={`= ${f.formula}`}>{f.name}</button>
                     {manager && <button type="button" onClick={() => removeSaved(f)} className="pr-2 text-muted hover:text-red-700" aria-label={t("Remove {n}", { n: f.name })}><X size={12} /></button>}
+                  </span>
+                ))}
                   </span>
                 ))}
               </div>
@@ -725,15 +739,9 @@ export default function QuickMath({ onResult, wide = false }) {
       </div>
       {s.mode === "sheet" ? (
         <>
-          <SlipPhoto onRows={(lines) => setSheet((cells) => {
-            const used = new Set(Object.keys(cells).filter((k) => cells[k]).map((k) => Number(k.slice(1))));
-            let r = 1;
-            while (used.has(r) && r < 20) r += 1;
-            const next = { ...cells };
-            lines.slice(0, 21 - r).forEach((nums, i) => nums.slice(0, 10).forEach((v, j) => (next[`${"ABCDEFGHIJ"[j]}${r + i}`] = v)));
-            return next;
-          })} />
-          <MiniSheet cells={sheet} onChange={setSheet} fmt={fmt} />
+          <SlipPhoto onRows={(lines) => setSheet((book) => addRowsToBook(book, lines))} />
+          <SheetFiles book={sheet} onOpen={setSheet} />
+          <ExcelSheet book={sheet} onChange={setSheet} />
         </>
       ) : (
         <>
@@ -896,6 +904,10 @@ export default function QuickMath({ onResult, wide = false }) {
             {saving && (
               <div className="flex flex-col gap-2 rounded-xl border border-accent p-3">
                 <Field label={t("Name")}><Input value={saving.name} onChange={(e) => setSaving({ ...saving, name: e.target.value })} placeholder={t("e.g. Stone charge")} autoFocus maxLength={60} /></Field>
+                <Field label={t("Folder")} hint={t("Optional, e.g. Stones, Exchange")}>
+                  <Input value={saving.folder || ""} onChange={(e) => setSaving({ ...saving, folder: e.target.value })} list="calc-folders" maxLength={60} />
+                  <datalist id="calc-folders">{[...new Set(saved.map((f) => f.folder).filter(Boolean))].map((f) => <option key={f} value={f} />)}</datalist>
+                </Field>
                 {Object.keys(saving.labels).length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
                     {Object.keys(saving.labels).map((l) => (
@@ -914,17 +926,25 @@ export default function QuickMath({ onResult, wide = false }) {
               </div>
             )}
             {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+            {saved.length > 6 && (
+              <Input value={fq} onChange={(e) => setFq(e.target.value)} placeholder={t("Search formulas")} className="h-8" />
+            )}
             {saved.length === 0 ? (
               <p className="text-xs text-muted">{manager ? t("Write a formula you use often, then press Save this formula. It becomes a button for all staff.") : t("The owner can save formulas here for everyone.")}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {saved.map((f) => (
+                {groupFolders(saved.filter((f) => !fq || `${f.name} ${f.folder || ""} ${f.formula}`.toLowerCase().includes(fq.toLowerCase()))).map(([folder, list]) => (
+                  <span key={folder || "-"} className="flex w-full flex-wrap items-center gap-1.5">
+                    {folder && <span className="w-full text-[11px] font-semibold uppercase tracking-wide text-muted">{folder}</span>}
+                {list.map((f) => (
                   <span key={f.id} className={clsx("inline-flex items-center rounded-full border text-sm", activeSaved?.id === f.id ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface")}>
                     <button type="button" onClick={() => togglePin(f)} className="pl-2 text-muted hover:text-accent" aria-label={t("Pin {n}", { n: f.name })}>
                       <Star size={12} className={pins.includes(f.id) ? "fill-current text-accent" : ""} />
                     </button>
                     <button type="button" onClick={() => applySaved(f)} className="px-2 py-1" title={`= ${f.formula}`}>{f.name}</button>
                     {manager && <button type="button" onClick={() => removeSaved(f)} className="pr-2 text-muted hover:text-red-700" aria-label={t("Remove {n}", { n: f.name })}><X size={12} /></button>}
+                  </span>
+                ))}
                   </span>
                 ))}
               </div>

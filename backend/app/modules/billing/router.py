@@ -183,3 +183,59 @@ async def add_gold_entry(shop_id: str, data: GoldEntryIn, db: AsyncSession = Dep
                dependencies=[Depends(require_role(*MANAGERS))])
 async def remove_gold_entry(shop_id: str, entry_id: str, db: AsyncSession = Depends(get_async_db)):
     return await GoldAccountService.remove(db, shop_id, entry_id)
+
+
+# ------------------------------------------------------------- draft bills
+
+from pydantic import BaseModel as _BM, Field as _F  # noqa: E402
+
+
+class DraftIn(_BM):
+    data: dict
+    shop_name: Optional[str] = _F(None, max_length=150)
+    line_count: int = _F(0, ge=0, le=1000)
+    grand_total: Optional[float] = None
+
+
+def _draft_out(r):
+    return {"id": r.id, "data": r.data, "shop_name": r.shop_name, "line_count": r.line_count,
+            "grand_total": float(r.grand_total) if r.grand_total is not None else None,
+            "created_by_name": r.created_by_name, "updated_at": r.updated_at}
+
+
+@router.get("/drafts")
+async def list_drafts(db: AsyncSession = Depends(get_async_db)):
+    from sqlalchemy import select
+    from app.modules.billing.model import BillDraftRow
+    rows = (await db.execute(select(BillDraftRow).order_by(BillDraftRow.updated_at.desc()).limit(100))).scalars()
+    return [_draft_out(r) for r in rows]
+
+
+@router.put("/drafts/{draft_id}")
+async def save_draft(draft_id: str, body: DraftIn, db: AsyncSession = Depends(get_async_db)):
+    """Create or update a draft (the browser makes the id, so saving twice never makes two)."""
+    import json
+    from decimal import Decimal as _D
+    from app._shared.core.actor import actor_name
+    from app._shared.exceptions.base import ValidationException as _VE
+    from app.modules.billing.model import BillDraftRow
+    if len(draft_id) > 36 or len(json.dumps(body.data)) > 200_000:
+        raise _VE("That draft is too big.")
+    r = await db.get(BillDraftRow, draft_id)
+    if r is None:
+        r = BillDraftRow(id=draft_id, created_by_name=actor_name())
+        db.add(r)
+    r.data, r.shop_name, r.line_count = body.data, body.shop_name, body.line_count
+    r.grand_total = _D(str(body.grand_total)) if body.grand_total is not None else None
+    await db.commit()
+    await db.refresh(r)
+    return _draft_out(r)
+
+
+@router.delete("/drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_draft(draft_id: str, db: AsyncSession = Depends(get_async_db)):
+    from app.modules.billing.model import BillDraftRow
+    r = await db.get(BillDraftRow, draft_id)
+    if r:
+        await db.delete(r)
+        await db.commit()

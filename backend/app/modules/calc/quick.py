@@ -88,7 +88,7 @@ def _letters(formula: str) -> List[str]:
 
 def _out(f: SavedFormula) -> SavedFormulaOut:
     return SavedFormulaOut(id=f.id, name=f.name, formula=f.formula, hint=f.hint, letters=_letters(f.formula),
-                           labels=f.labels or {}, example=f.example, versions=len(f.history or []),
+                           labels=f.labels or {}, folder=f.folder, example=f.example, versions=len(f.history or []),
                            created_by_name=f.created_by_name)
 
 
@@ -134,7 +134,8 @@ class SavedFormulaService:
         n = (await db.execute(select(func.count(SavedFormula.id)))).scalar() or 0
         f = SavedFormula(id=str(uuid.uuid4()), name=name, formula=formula, hint=(data.hint or "").strip() or None,
                          labels={k.upper(): v.strip() for k, v in (data.labels or {}).items() if v and v.strip()} or None,
-                         example=_example(formula, data.example), sort=n, created_by_name=actor_name())
+                         example=_example(formula, data.example), sort=n, created_by_name=actor_name(),
+                         folder=(data.folder or "").strip() or None)
         db.add(f)
         await db.commit()
         return _out(f)
@@ -155,6 +156,8 @@ class SavedFormulaService:
                 f.example = _example(f.formula, f.example.get("values"))
         if "hint" in data.model_fields_set:
             f.hint = (data.hint or "").strip() or None
+        if "folder" in data.model_fields_set:
+            f.folder = (data.folder or "").strip() or None
         if data.labels is not None:
             f.labels = {k.upper(): v.strip() for k, v in data.labels.items() if v and v.strip()} or None
         f.history = [before, *(f.history or [])][:10]
@@ -187,7 +190,7 @@ class SavedFormulaService:
 
 async def my_data(db: AsyncSession, user_id: str) -> MyCalcOut:
     row = await db.get(CalcUserData, user_id)
-    return MyCalcOut(tape=row.tape or [], sheet=row.sheet or {}, pins=row.pins or []) if row else MyCalcOut()
+    return MyCalcOut(tape=row.tape or [], sheet=row.sheet, pins=row.pins or []) if row else MyCalcOut()
 
 
 async def save_my_data(db: AsyncSession, user_id: str, data: MyCalcIn) -> MyCalcOut:
@@ -198,7 +201,10 @@ async def save_my_data(db: AsyncSession, user_id: str, data: MyCalcIn) -> MyCalc
     if data.tape is not None:
         row.tape = [{"expr": str(x.get("expr", ""))[:300], "result": str(x.get("result", ""))[:60]} for x in data.tape][:50]
     if data.sheet is not None:
-        row.sheet = {k.upper(): str(v)[:500] for k, v in data.sheet.items() if v}
+        import json
+        if len(json.dumps(data.sheet)) > 3_000_000:
+            raise ValidationException("The sheet is too big to save.")
+        row.sheet = data.sheet
     if data.pins is not None:
         row.pins = data.pins[:12]
     await db.commit()
